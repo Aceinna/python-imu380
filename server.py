@@ -11,9 +11,6 @@ import threading
 import Tkinter
 import tkMessageBox
 
-
-
-
 server_version = '0.1 Beta'
 
 class WSHandler(tornado.websocket.WebSocketHandler):
@@ -41,12 +38,39 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         global imu
         if message == 'status':
             self.write_message(json.dumps({ 'status' : server_version, 'odr' : imu.odr_setting, 'device_id' : imu.device_id  }))
-        if message == 'start_log' and imu.logging == 0:
-            imu.start_log(ws=True)
+        elif message == 'start_log' and imu.logging == 0:
+            imu.start_log()
             self.write_message(json.dumps({ 'logfile' : imu.logger.name }))
-        if message == 'stop_log' and imu.logging == 1:
-            imu.stop_log(ws=True)
+        elif message == 'stop_log' and imu.logging == 1:
+            imu.stop_log()
             self.write_message(json.dumps({ 'logfile' : '' }))
+        else:
+            message = json.loads(message)
+            if message['cmd'] == "GF":
+                data = imu.get_fields(message['data'], True)
+                print('get fields')
+                print(data)
+                self.write_message(json.dumps({"cmd" : "GF", "data": data}))
+            elif message['cmd'] == "RF":
+                data = imu.read_fields(message['data'], True)
+                print('read fields')
+                print(data)
+                self.write_message(json.dumps({"cmd" : "RF", "data": data}))
+            elif message['cmd'] == "SF":
+                data = imu.set_fields(message['data'], True)
+                print('set fields')
+                print(message['data'])
+                print(data)
+                self.write_message(json.dumps({"cmd" : "SF", "data": data}))
+            elif message['cmd'] == "WF":
+                data = imu.write_fields(message['data'], True)
+                print('write fields')
+                print(message['data'])
+                print(data)
+                self.write_message(json.dumps({"cmd" : "WF", "data": data}))
+            
+
+
 
 
     def on_close(self):
@@ -58,9 +82,9 @@ class WSHandler(tornado.websocket.WebSocketHandler):
  
 if __name__ == "__main__":
     application = tornado.web.Application([(r'/', WSHandler),])
-    imu = imu380.GrabIMU380Data()
-    print('starting web socket server')
+    imu = imu380.GrabIMU380Data(ws=True)
     threading.Thread(target=imu.stream).start()
+    print('starting web socket server')
     http_server = tornado.httpserver.HTTPServer(application)
     http_server.listen(8000)
     tornado.ioloop.IOLoop.instance().start()

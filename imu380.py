@@ -19,9 +19,10 @@ import collections
 import glob
 
 class GrabIMU380Data:
-    def __init__(self):
+    def __init__(self, ws=False):
         '''Initialize and then start ports search and autobaud process
         '''
+        self.ws = ws                # set to true if being run as a thread in a websocket server
         self.ser = None             # the active UART
         self.stream_mode = 0        # 0 = polled, 1 = streaming
         self.device_id = 0          # unit's id str
@@ -31,9 +32,10 @@ class GrabIMU380Data:
         self.packet_size = 0        
         self.packet_type = 0        
         self.data = {}              # placeholder imu measurements of last converted packeted
-        
-        # find the IMU  380
-        self.find_device()
+       
+        # automatically find and connect to the IMU  380 automatically when not in a WebSocket server
+        if not self.ws:
+            self.find_device()
 
 
     def find_device(self):
@@ -98,11 +100,12 @@ class GrabIMU380Data:
                     self.device_id = self.get_id_str()
                     if self.device_id:
                         print('Connected Polled Mode ' + '{0:d}'.format(baud))
-                        # return it to streamed mode
+                        # return it to streamed mode and sync
                         self.odr_setting = 0x01
                         self.set_fields([[0x0001, self.odr_setting]])
-                        self.sync()        
-                        print('Now Connectd Stream Mode ' + '{0:d}'.format(baud))                
+                        self.sync()     
+                        print('Now Connectd Stream Mode ' + '{0:d}'.format(baud)) 
+                        return True               
                     else:
                         self.ser.close()
 
@@ -110,8 +113,8 @@ class GrabIMU380Data:
             else:
                 odr = self.read_fields([0x0001])
                 if odr:
-                    self.odr_setting = sum(odr[3:5])  # read ODR field
-                    self.device_id = self.get_id_str()
+                    self.odr_setting = sum(odr[3:5])    # read ODR field
+                    self.device_id = self.get_id_str()  # read device string
                     return True
                 else:
                     print('failed to get id string')
@@ -127,9 +130,9 @@ class GrabIMU380Data:
         if self.stream_mode == 1:
             return self.data
         else: 
-            return { 'err' : 'Not connected' }
+            return { 'error' : 'Not connected' }
     
-    def start_log(self, type = False, ws = False):
+    def start_log(self, type = False):
         '''Creates file or cloud logger.  Autostarts log activity if ws (websocket) set to false
         '''
         self.logging = 1
@@ -137,10 +140,10 @@ class GrabIMU380Data:
             self.logger = aceinna_storage.LogIMU380Data()
         else:
             self.logger = file_storage.LogIMU380Data()
-        if ws == False and self.odr_setting != 0:
+        if self.ws == False and self.odr_setting != 0:
             self.stream()
     
-    def stop_log(self, ws = False):
+    def stop_log(self):
         '''Stops file or cloud logger
         '''
         self.logging = 0
@@ -168,7 +171,7 @@ class GrabIMU380Data:
         else: 
             return False
     
-    def get_fields(self,fields): 
+    def get_fields(self,fields, ws = False): 
         '''Executes 380 GF command for an array of fields.  GF Command get current Temporary setting of 380
         ''' 
         # Take unit out of stream mode
@@ -187,14 +190,17 @@ class GrabIMU380Data:
         C.insert(len(C), crc_lsb)
         self.ser.write(C)
         R = bytearray(self.ser.read(num_fields * 4 + 1 + 7))
+        data = []
         if R[0] == 85 and R[1] == 85:
             packet_crc = 256 * R[-2] + R[-1]                   # crc is last two bytes
             calc_crc = self.calc_crc(R[2:R[4]+5])
             if packet_crc == calc_crc:
                 self.packet_type = '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
-                self.parse_packet(R[5:R[4]+5])
+                data = self.parse_packet(R[5:R[4]+5], ws)
+        self.restore_odr()
+        return data
     
-    def read_fields(self,fields): 
+    def read_fields(self,fields, ws = False): 
         '''Executes 380 RF command for an array of fields.  RF Command get current Permanent setting of 380
         ''' 
         # Take unit out of stream mode
@@ -213,15 +219,17 @@ class GrabIMU380Data:
         C.insert(len(C), crc_lsb)
         self.ser.write(C)
         R = bytearray(self.ser.read(num_fields * 4 + 1 + 7))
-        print(R)
+        data = []
         if len(R) and R[0] == 85 and R[1] == 85:
             packet_crc = 256 * R[-2] + R[-1]                   # crc is last two bytes
             calc_crc = self.calc_crc(R[2:R[4]+5])
             if packet_crc == calc_crc:
                 self.packet_type = '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
-                return self.parse_packet(R[5:R[4]+5])
+                data = self.parse_packet(R[5:R[4]+5], ws)
+        self.restore_odr()
+        return data
     
-    def write_fields(self, field_value_pairs):
+    def write_fields(self, field_value_pairs, ws=False):
         '''Executes 380 WF command for an array of fields, value pairs.  WF Command set Permanent setting for fields on 380
         '''
         self.set_quiet()     
@@ -248,7 +256,10 @@ class GrabIMU380Data:
         C.insert(len(C), crc_msb)
         C.insert(len(C), crc_lsb)
         self.ser.write(C)
+        time.sleep(1.0)
         R = bytearray(self.ser.read(num_fields * 2 + 1 +7))
+        print(R)
+        data = []
         if R[0] == 85 and R[1] == 85:
             packet_crc = 256 * R[-2] + R[-1]                   # crc is last two bytes
             if self.calc_crc(R[2:R[4]+5]) == packet_crc:
@@ -257,9 +268,10 @@ class GrabIMU380Data:
                     return
                 else: 
                     self.packet_type =  '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
-                    self.parse_packet(R[5:R[4]+5])
+                    data = self.parse_packet(R[5:R[4]+5], ws)
+        return data
     
-    def set_fields(self, field_value_pairs):
+    def set_fields(self, field_value_pairs, ws=False):
         '''Executes 380 SF command for an array of fields, value pairs.  SF Command sets Temporary setting for fields on 380
         '''
         self.set_quiet()     
@@ -283,6 +295,7 @@ class GrabIMU380Data:
         C.insert(len(C), crc_lsb)
         self.ser.write(C)
         R = bytearray(self.ser.read(num_fields * 2 + 1 +7))
+        data = []
         if R[0] == 85 and R[1] == 85:
             packet_crc = 256 * R[-2] + R[-1]                   # crc is last two bytes
             if self.calc_crc(R[2:R[4]+5]) == packet_crc:
@@ -291,8 +304,9 @@ class GrabIMU380Data:
                     return
                 else: 
                     self.packet_type =  '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
-                    self.parse_packet(R[5:R[4]+5])
-        
+                    data = self.parse_packet(R[5:R[4]+5], ws)
+        return data
+
     def set_quiet(self):
         '''Force 380 device to quiet / polled mode and inject 0.1 second delay, then clear input buffer
         '''
@@ -312,9 +326,15 @@ class GrabIMU380Data:
     def stream(self):
         '''Set 380 to odr_setting and connect.  Assume find_device has already occured at some prior point
         ''' 
+        if self.ws:
+            self.find_device()
+
         if self.odr_setting:
-            self.set_fields([[0x0001, self.odr_setting]])
+            self.restore_odr()
             self.connect()
+    
+    def restore_odr(self):
+        self.set_fields([[0x0001, self.odr_setting]])
         
     def connect(self):
         '''Continous data collection loop to get and process data packets in stream mode
@@ -483,6 +503,7 @@ class GrabIMU380Data:
     def upgrade_fw(self,file):
         '''Upgrades firmware of connected 380 device to file provided in argument
         '''
+        print('upgrade fw')
         max_data_len = 240
         write_len = 0
         fw = open(file, 'rb').read()
@@ -491,7 +512,8 @@ class GrabIMU380Data:
         if not self.start_bootloader():
             print('Bootloader Start Failed')
             return False
-        
+       
+
         time.sleep(1)
         while (write_len < fs_len):
             packet_data_len = max_data_len if (fs_len - write_len) > max_data_len else (fs_len-write_len)
@@ -529,7 +551,7 @@ class GrabIMU380Data:
 
 
 
-    def parse_packet(self, payload):
+    def parse_packet(self, payload, ws = False):
         '''Parses packet payload to engineering units based on packet type
            Currently supports S0, S1, A1 packets.  Logs data if logging is on.
            Prints data if a GF/RF/SF/WF
@@ -698,24 +720,45 @@ class GrabIMU380Data:
         elif self.packet_type == 'SF':
             n = payload[0]
             for i in range(n):
-                print('Set Field: 0x{0:02X}'.format(payload[i*2+1]) + '{0:02X}'.format(payload[i*2+2]))
+                if ws == False:
+                    print('Set Field: 0x{0:02X}'.format(payload[i*2+1]) + '{0:02X}'.format(payload[i*2+2]))
+                else:
+                    return 1
         elif self.packet_type == 'WF':
             n = payload[0]
+            data = [0] * n  #empty array
             for i in range(n):
-                print('Write Field: 0x{0:02X}'.format(payload[i*2+1]) + '{0:02X}'.format(payload[i*2+2])) 
+                if ws == False:
+                    print('Write Field: 0x{0:02X}'.format(payload[i*2+1]) + '{0:02X}'.format(payload[i*2+2])) 
+                else:
+                    return 1
         elif self.packet_type == 'RF':
             n = payload[0]
+            data = [0] * n  #empty array
             for i in range(n):
-                print(( 'Read Field: 0x{0:02X}'.format(payload[i*4+1]) + '{0:02X}'.format(payload[i*4+2]) 
-                + ' set to: 0x{0:02X}{1:02X}'.format(payload[i*4+3],payload[i*4+4])  
-                + ' ({0:1c}{1:1c})'.format(payload[i*4+3],payload[i*4+4]) ))
-            return payload
+                if ws == False:
+                    print(( 'Read Field: 0x{0:02X}'.format(payload[i*4+1]) + '{0:02X}'.format(payload[i*4+2]) 
+                    + ' set to: 0x{0:02X}{1:02X}'.format(payload[i*4+3],payload[i*4+4])  
+                    + ' ({0:1c}{1:1c})'.format(payload[i*4+3],payload[i*4+4]) ))
+                else:
+                    data[i] = [256 * payload[i*4+1] + payload[i*4+2], 256 * payload[i*4+3] + payload[i*4+4]]
+            return data
         elif self.packet_type == 'GF':
             n = payload[0]
+            data = [0] * n  #empty array
             for i in range(n):
-                print(( 'Get Field: 0x{0:02X}'.format(payload[i*4+1]) + '{0:02X}'.format(payload[i*4+2]) 
-                + ' set to: 0x{0:02X}{1:02X}'.format(payload[i*4+3],payload[i*4+4])  
-                + ' ({0:1c}{1:1c})'.format(payload[i*4+3],payload[i*4+4]) ))
+                # remap about odr because unit was forced to quiet mode during GF read
+                if ((256 * payload[i*4+1] + payload[i*4+2]) == 1):
+                    payload[i*4+3] = 0
+                    payload[i*4+4] = self.odr_setting
+                if ws == False:
+                    print(( 'Get Field: 0x{0:02X}'.format(payload[i*4+1]) + '{0:02X}'.format(payload[i*4+2]) 
+                    + ' set to: 0x{0:02X}{1:02X}'.format(payload[i*4+3],payload[i*4+4])  
+                    + ' ({0:1c}{1:1c})'.format(payload[i*4+3],payload[i*4+4]) ))
+                else:
+                    data[i] = [256 * payload[i*4+1] + payload[i*4+2], 256 * payload[i*4+3] + payload[i*4+4]]
+            return data
+            
         elif self.packet_type == 'VR':
             '''this packet type is obsolete'''
             print('Version String: {0}.{1}.{2}.{3}.{4}'.format(*payload))
@@ -741,4 +784,12 @@ class GrabIMU380Data:
 
 if __name__ == "__main__":
     grab = GrabIMU380Data()
+    #grab.upgrade_fw('MTLT305D_19.0.6.bin')
     grab.start_log()
+    # Test for WS Server
+    #grab.read_fields([0x0001, 0x0002, 0x0003])
+    #grab.get_fields([0x0001, 0x0002, 0x0003])
+    #grab.write_fields([[3, 21296]])
+    #grab.read_fields([0x0001, 0x0002, 0x0003])
+    #grab.get_fields([0x0001, 0x0002, 0x0003])
+    
