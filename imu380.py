@@ -113,8 +113,12 @@ class GrabIMU380Data:
             else:
                 odr = self.read_fields([0x0001])
                 if odr:
-                    self.odr_setting = sum(odr[3:5])    # read ODR field
+                    print(odr)
+                    # self.odr_setting = sum(odr[3:5])    # read ODR field
+                    # TODO: this is an issue, not getting odr field view
+                    self.odr_setting = 0x0001
                     self.device_id = self.get_id_str()  # read device string
+                    self.restore_odr()
                     return True
                 else:
                     print('failed to get id string')

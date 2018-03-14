@@ -39,11 +39,15 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         if message == 'status':
             self.write_message(json.dumps({ 'status' : server_version, 'odr' : imu.odr_setting, 'device_id' : imu.device_id  }))
         elif message == 'start_log' and imu.logging == 0:
-            imu.start_log()
+            imu.start_log('cloud') # log to cloud
             self.write_message(json.dumps({ 'logfile' : imu.logger.name }))
         elif message == 'stop_log' and imu.logging == 1:
             imu.stop_log()
             self.write_message(json.dumps({ 'logfile' : '' }))
+        elif message == 'stream':
+            imu.set_quiet()
+            imu.set_fields([[0x0001, 0x0001]])
+            imu.connect()
         else:
             message = json.loads(message)
             if message['cmd'] == "GF":
