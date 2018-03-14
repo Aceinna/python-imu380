@@ -13,7 +13,7 @@ Run server_ui.py to run as a server for Aceinna Navigation Studio (ANS) web app
 This is core driver for the DMU38x family of IMU's.  It can do the following functions:
 
 - automatically discover a DMU38x connected to serial port  TODO: make faster and more reliable
-- log data to local file or azure cloud TODO: add system for using user keys
+- log data to local file or azure cloud TODO: add system for using user specific access_token and storage location
 - parse various ouput packets:  TODO: complete and test all packet types, as well as custom user packet from OpenIMU
 - read/write and get/set EEPROM fields
 - upgrade firmware of device
@@ -34,3 +34,10 @@ This is simple UI to control server.py.  Uses Tkinter to build a UI and allow st
 
 TODO: extend to show some status information
 TODO: use pyinstaller to build a reliable installer executable distribution for MAC and Windows
+
+
+### file_storage.py / aceina_storage.py
+
+These file store parsed packet data to CSV either locally or on Azure cloud.  Uses Azure Python SDK to write to Azure.  TODO: consider support allowing custom file name
+TODO: log meta data like NAV-VIEW does - serial number etc
+TODO: use customer access_token to write to customer specific sub-space on azure
