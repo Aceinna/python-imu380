@@ -359,6 +359,7 @@ class GrabIMU380Data:
         '''
         self.connected = 1
         while self.connected:
+            #self.get_bit_status()
             self.get_packet()
         return  # ends thread
 
@@ -569,12 +570,33 @@ class GrabIMU380Data:
         else: 
             return False
 
+    def get_bit_status(self):
+        ''' Executes GP command and requests bit stsatus from 380
+            :returns:
+        '''
+        self.set_quiet()
+        C = [0x55, 0x55, ord('G'), ord('P'), 0x02, ord('T'), ord('0') ]
+        crc = self.calc_crc(C[2:C[4]+5])   
+        crc_msb = (crc & 0xFF00) >> 8
+        crc_lsb = (crc & 0x00FF)
+        C.insert(len(C), crc_msb)
+        C.insert(len(C), crc_lsb)
+        self.ser.write(C)
+        R = bytearray(self.ser.read(5))    
+        if len(R) and R[0] == 85 and R[1] == 85:
+            self.packet_type =  '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
+            payload_length = R[4]
+            R = bytearray(self.ser.read(payload_length+2))
+            id_str = self.parse_packet(R[0:payload_length])
+            return id_str
+        else: 
+            return False
 
 
     def parse_packet(self, payload, ws = False):
         '''Parses packet payload to engineering units based on packet type
            Currently supports S0, S1, A1 packets.  Logs data if logging is on.
-           Prints data if a GF/RF/SF/WF
+           Prints data if a GF/RF/SF/WF. Add A2, N0, N1 packet types.
         '''
         if self.packet_type == 'S0':
             '''S0 Payload Contents
@@ -630,6 +652,25 @@ class GrabIMU380Data:
                 self.logger.log(data, self.odr_setting) 
             
             return data
+
+        elif self.packet_type == 'F1':
+            '''F1 Payload Contents
+                Byte Offset	Name	Format	Scaling	Units	Description
+                0       payload length  U2                      user-definied payload length 
+                2       payload content U1                      JSON file''' 
+
+            # payload length
+            len = 256 * payload[0] + payload[1]         
+
+            if len == 0:
+               return 0
+
+            f = open("user_format.json", "r")
+
+            f.close()
+
+            return len 
+
         elif self.packet_type == 'S1':
             '''S1 Payload Contents
                 Byte Offset	Name	Format	Scaling	Units	Description
@@ -707,7 +748,7 @@ class GrabIMU380Data:
 
             accels = [0 for x in range(3)] 
             for i in range(3):
-                accel_int16 = (256 * payload[2*i+12] + payload[2*i+1+13]) - 65535 if 256 * payload[2*i+12] + payload[2*i+13] > 32767  else  256 * payload[2*i+12] + payload[2*i+13]
+                accel_int16 = (256 * payload[2*i+12] + payload[2*i+13]) - 65535 if 256 * payload[2*i+12] + payload[2*i+13] > 32767  else  256 * payload[2*i+12] + payload[2*i+13]
                 accels[i] = (20 * accel_int16) / math.pow(2,16)
             
             mags = [0 for x in range(3)] 
@@ -730,6 +771,314 @@ class GrabIMU380Data:
                     ( 'xAccel', accels[0]), ('yAccel', accels[1]), ('zAccel', accels[2]), \
                     ( 'xMag', mags[0]), ('yMag', mags[1]), ('zMag', mags[2]), ('xRateTemp', temp), \
                     ('timeITOW', itow), ('BITstatus', bit )])
+
+
+            if self.logging == 1 and self.logger is not None:
+                self.logger.log(data, self.odr_setting) 
+            
+            return data
+
+        elif self.packet_type == 'A2': 
+            '''A2 Payload Contents
+                0	rollAngle	I2	2*pi/2^16 [360 deg/2^16]	Radians [deg]	Roll angle
+                2	pitchAngle	I2	2*pi/2^16 [360 deg/2^16]	Radians [deg]	Pitch angle
+                4	yawAngleMag	I2	2*pi/2^16 [360 deg/2^16]	Radians [deg]	Yaw angle (magnetic north)
+                6	xRateCorrected	I2	7*pi/2^16[1260 deg/2^16]	rad/s  [deg/sec]	X angular rate Corrected
+                8	yRateCorrected	I2	7*pi/2^16 [1260 deg/2^16]	rad/s  [deg/sec]	Y angular rate Corrected
+                10	zRateCorrected	I2	7*pi/2^16 [1260 deg/2^16]	rad/s  [deg/sec]	Z angular rate Corrected
+                12	xAccel	  I2	20/2^16	g	X accelerometer
+                14	yAccel	  I2	20/2^16	g	Y accelerometer
+                16	zAccel	  I2	20/2^16	g	Z accelerometer
+                18	xRateTemp I2	200/2^16	Deg.C   X rate temperature 
+                20	yRatetemp I2	200/2^16	Deg.C	Y rate temperature 
+                22	zRateTemp I2	200/2^16	Deg.C   Z rate temperature 
+                24	timeITOW	U4	1	ms	DMU ITOW (sync to GPS)
+                28	BITstatus	U2	-	-	Master BIT and Status'''
+
+            angles = [0 for x in range(3)] 
+            for i in range(3):
+                angle_int16 = (256 * payload[2*i] + payload[2*i+1]) - 65535 if 256 * payload[2*i] + payload[2*i+1] > 32767  else  256 * payload[2*i] + payload[2*i+1]
+                angles[i] = (2 * math.pi * angle_int16) / math.pow(2,16) 
+
+            gyros = [0 for x in range(3)] 
+            for i in range(3):
+                gyro_int16 = (256 * payload[2*i+6] + payload[2*i+7]) - 65535 if 256 * payload[2*i+6] + payload[2*i+7] > 32767  else  256 * payload[2*i+6] + payload[2*i+7]
+                gyros[i] = (7 * math.pi * gyro_int16) / math.pow(2,16) 
+
+            accels = [0 for x in range(3)] 
+            for i in range(3):
+                accel_int16 = (256 * payload[2*i+12] + payload[2*i+13]) - 65535 if 256 * payload[2*i+12] + payload[2*i+13] > 32767  else  256 * payload[2*i+12] + payload[2*i+13]
+                accels[i] = (20 * accel_int16) / math.pow(2,16)
+            
+            temp = [0 for x in range(3)] 
+            for i in range(3):
+                temp_int16 = (256 * payload[2*i+18] + payload[2*i+19]) - 65535 if 256 * payload[2*i+18] + payload[2*i+19] > 32767  else  256 * payload[2*i+18] + payload[2*i+19]
+                temp[i] = (200 * temp_int16) / math.pow(2,16)
+        
+            # Counter Value
+            itow = 16777216 * payload[24] + 65536 * payload[25] + 256 * payload[26] + payload[27]   
+
+            # BIT Value
+            bit = 256 * payload[28] + payload[29]         
+
+            data = collections.OrderedDict([('rollAngle', angles[0]),('pitchAngle', angles[1]),('yawAngleMag', angles[2]), \
+                    ('xRateCorrected' , gyros[0]), ('yRateCorrected' , gyros[1]), ('zRateCorrected', gyros[2]), \
+                    ( 'xAccel', accels[0]), ('yAccel', accels[1]), ('zAccel', accels[2]), \
+                    ( 'xRateTemp', temp[0]), ('yRateTemp', temp[1]), ('zRateTemp', temp[2]), \
+                    ('timeITOW', itow), ('BITstatus', bit )])
+
+
+            if self.logging == 1 and self.logger is not None:
+                self.logger.log(data, self.odr_setting) 
+            
+            return data
+
+        elif self.packet_type == 'A3': 
+            '''A3 Payload Contents
+                0	rollAngle	I2	2*pi/2^16 [360 deg/2^16]	Radians [deg]	Roll angle
+                2	pitchAngle	I2	2*pi/2^16 [360 deg/2^16]	Radians [deg]	Pitch angle
+                4	yawAngleMag	I2	2*pi/2^16 [360 deg/2^16]	Radians [deg]	Yaw angle (magnetic north)
+                6	xRateScaled     I2	7*pi/2^16[1260 deg/2^16]	rad/s  [deg/sec]	X angular rate Corrected
+                8	yRateScaled     I2	7*pi/2^16 [1260 deg/2^16]	rad/s  [deg/sec]	Y angular rate Corrected
+                10	zRateScaled     I2	7*pi/2^16 [1260 deg/2^16]	rad/s  [deg/sec]	Z angular rate Corrected
+                12	xAccel	  I2	20/2^16	g	X accelerometer
+                14	yAccel	  I2	20/2^16	g	Y accelerometer
+                16	zAccel	  I2	20/2^16	g	Z accelerometer
+                18	xRateTemp I2	200/2^16	Deg.C   X rate temperature 
+                20	yRatetemp I2	200/2^16	Deg.C	Y rate temperature 
+                22	zRateTemp I2	200/2^16	Deg.C   Z rate temperature 
+                24	timeITOW	U4	1	ms	DMU ITOW (sync to GPS)
+                28	BITstatus	U2	-	-	Master BIT and Status'''
+
+            angles = [0 for x in range(3)] 
+            for i in range(3):
+                angle_int16 = (256 * payload[2*i] + payload[2*i+1]) - 65535 if 256 * payload[2*i] + payload[2*i+1] > 32767  else  256 * payload[2*i] + payload[2*i+1]
+                angles[i] = (2 * math.pi * angle_int16) / math.pow(2,16) 
+
+            gyros = [0 for x in range(3)] 
+            for i in range(3):
+                gyro_int16 = (256 * payload[2*i+6] + payload[2*i+7]) - 65535 if 256 * payload[2*i+6] + payload[2*i+7] > 32767  else  256 * payload[2*i+6] + payload[2*i+7]
+                gyros[i] = (7 * math.pi * gyro_int16) / math.pow(2,16) 
+
+            accels = [0 for x in range(3)] 
+            for i in range(3):
+                accel_int16 = (256 * payload[2*i+12] + payload[2*i+13]) - 65535 if 256 * payload[2*i+12] + payload[2*i+13] > 32767  else  256 * payload[2*i+12] + payload[2*i+13]
+                accels[i] = (20 * accel_int16) / math.pow(2,16)
+            
+            temp = [0 for x in range(3)] 
+            for i in range(3):
+                temp_int16 = (256 * payload[2*i+18] + payload[2*i+19]) - 65535 if 256 * payload[2*i+18] + payload[2*i+19] > 32767  else  256 * payload[2*i+18] + payload[2*i+19]
+                temp[i] = (200 * temp_int16) / math.pow(2,16)
+        
+            # Counter Value
+            itow = 16777216 * payload[24] + 65536 * payload[25] + 256 * payload[26] + payload[27]   
+
+            # BIT Value
+            bit = 256 * payload[28] + payload[29]         
+
+            data = collections.OrderedDict([('rollAngle', angles[0]),('pitchAngle', angles[1]),('yawAngleMag', angles[2]), \
+                    ('xRateScaled' , gyros[0]), ('yRateScaled' , gyros[1]), ('zRateScaled', gyros[2]), \
+                    ( 'xAccel', accels[0]), ('yAccel', accels[1]), ('zAccel', accels[2]), \
+                    ( 'xRateTemp', temp[0]), ('yRateTemp', temp[1]), ('zRateTemp', temp[2]), \
+                    ('timeITOW', itow), ('BITstatus', bit )])
+
+
+            if self.logging == 1 and self.logger is not None:
+                self.logger.log(data, self.odr_setting) 
+            
+            return data
+
+        elif self.packet_type == 'N0': 
+            '''N0 Payload Contents
+                0	rollAngle	I2	2*pi/2^16 [360 deg/2^16]	Radians [deg]	Roll angle
+                2	pitchAngle	I2	2*pi/2^16 [360 deg/2^16]	Radians [deg]	Pitch angle
+                4	yawAngleMag	I2	2*pi/2^16 [360 deg/2^16]	Radians [deg]	Yaw angle (magnetic north)
+                6	xRateCorrected  I2	7*pi/2^16[1260 deg/2^16]	rad/s  [deg/sec]	X angular rate Corrected
+                8	yRateCorrected  I2	7*pi/2^16 [1260 deg/2^16]	rad/s  [deg/sec]	Y angular rate Corrected
+                10	zRateCorrected  I2	7*pi/2^16 [1260 deg/2^16]	rad/s  [deg/sec]	Z angular rate Corrected
+                12	nVel            I2	512/2^16	m/s        North velocity	
+                14	eVel            I2	512/2^16	m/s	   East Velocity 
+                16	dVel            I2	512/2^16	m/s	   Down velocity 
+                18	longiTude       I4	2*pi/2^32	Radians    Longitude 
+                22	latiTude        I4	2*pi/2^32     	Radians    Latitude 
+                26	altiTude        I2	2^14/2^16	m          GPS altitude 
+                28	iTOW	        U2	truncated	ms	   ITOW (lower 2 bytes)
+                30	BITstatus	U2	-	        -	   Master BIT and Status'''
+
+            angles = [0 for x in range(3)] 
+            for i in range(3):
+                angle_int16 = (256 * payload[2*i] + payload[2*i+1]) - 65535 if 256 * payload[2*i] + payload[2*i+1] > 32767  else  256 * payload[2*i] + payload[2*i+1]
+                angles[i] = (2 * math.pi * angle_int16) / math.pow(2,16) 
+
+            gyros = [0 for x in range(3)] 
+            for i in range(3):
+                gyro_int16 = (256 * payload[2*i+6] + payload[2*i+7]) - 65535 if 256 * payload[2*i+6] + payload[2*i+7] > 32767  else  256 * payload[2*i+6] + payload[2*i+7]
+                gyros[i] = (7 * math.pi * gyro_int16) / math.pow(2,16) 
+
+            vel = [0 for x in range(3)] 
+            for i in range(3):
+                vel_int16 = (256 * payload[2*i+12] + payload[2*i+13]) - 65535 if 256 * payload[2*i+12] + payload[2*i+13] > 32767  else  256 * payload[2*i+12] + payload[2*i+13]
+                vel[i] = (512 * vel_int16) / math.pow(2,16)
+            
+            tude = [0 for x in range(3)] 
+            for i in range(2):
+                tude_int32 = (16777216 * payload[2*i+18] + 65536 * payload[2*i+19] + 256 * payload[2*i+20] + payload[21]) - 2147483648 if 16777216 * payload[2*i+18] + 65536 *  payload[2*i+19] + 256 * payload[2*i+20] + payload[21] > 2147483647  else  16777216 * payload[2*i+18] + 65536 * payload[2*i+19] + 256 * payload[2*i+20] + payload[21]
+                tude[i] = (2 * math.pi * tude_int32) / math.pow(2,32)
+       
+            # altitude
+            tude_int16 = 256 * payload[26] + payload[27];
+            tude[2] = (16384 * tude_int16) / math.pow(2,16); 
+           
+            # Counter Value
+            itow = 256 * payload[28] + payload[29]   
+
+            # BIT Value
+            bit = 256 * payload[30] + payload[31]         
+
+            data = collections.OrderedDict([('rollAngle', angles[0]),('pitchAngle', angles[1]),('yawAngleMag', angles[2]), \
+                    ('xRateCorrected' , gyros[0]), ('yRateCorrected' , gyros[1]), ('zRateCOrrected', gyros[2]), \
+                    ( 'nVel', vel[0]), ('eVel', vel[1]), ('dVel', vel[2]), \
+                    ( 'longitude', tude[0]), ('latitude', tude[1]), ('altitude', tude[2]), \
+                    ('iTOW', itow), ('BITstatus', bit )])
+
+
+            if self.logging == 1 and self.logger is not None:
+                self.logger.log(data, self.odr_setting) 
+            
+            return data
+
+        elif self.packet_type == 'N1': 
+            '''N0 Payload Contents
+                0	rollAngle	I2	2*pi/2^16 [360 deg/2^16]	Radians [deg]	Roll angle
+                2	pitchAngle	I2	2*pi/2^16 [360 deg/2^16]	Radians [deg]	Pitch angle
+                4	yawAngleMag	I2	2*pi/2^16 [360 deg/2^16]	Radians [deg]	Yaw angle (magnetic north)
+                6	xRateCorrected  I2	7*pi/2^16[1260 deg/2^16]	rad/s  [deg/sec]	X angular rate Corrected
+                8	yRateCorrected  I2	7*pi/2^16 [1260 deg/2^16]	rad/s  [deg/sec]	Y angular rate Corrected
+                10	zRateCorrected  I2	7*pi/2^16 [1260 deg/2^16]	rad/s  [deg/sec]	Z angular rate Corrected
+                12	xAccel	        I2	20/2^16	                        g	                X accelerometer
+                14	yAccel	        I2	20/2^16	                        g	                Y accelerometer
+                16	zAccel	        I2	20/2^16	                        g	                Z accelerometer
+                18	nVel            I2	512/2^16	m/s        North velocity	
+                20	eVel            I2	512/2^16	m/s	   East Velocity 
+                22	dVel            I2	512/2^16	m/s	   Down velocity 
+                24	longiTude       I4	2*pi/2^32	Radians    Longitude 
+                28	latiTude        I4	2*pi/2^32     	Radians    Latitude 
+                32	altiTude        I2	2^14/2^16	m          GPS altitude 
+                34	xRateTemp	I2	200/2^16	Deg C	X rate temperature
+                36	iTOW	        U2	truncated	ms	   ITOW (lower 2 bytes)'''
+
+            angles = [0 for x in range(3)] 
+            for i in range(3):
+                angle_int16 = (256 * payload[2*i] + payload[2*i+1]) - 65535 if 256 * payload[2*i] + payload[2*i+1] > 32767  else  256 * payload[2*i] + payload[2*i+1]
+                angles[i] = (2 * math.pi * angle_int16) / math.pow(2,16) 
+
+            gyros = [0 for x in range(3)] 
+            for i in range(3):
+                gyro_int16 = (256 * payload[2*i+6] + payload[2*i+7]) - 65535 if 256 * payload[2*i+6] + payload[2*i+7] > 32767  else  256 * payload[2*i+6] + payload[2*i+7]
+                gyros[i] = (7 * math.pi * gyro_int16) / math.pow(2,16) 
+
+            accels = [0 for x in range(3)] 
+            for i in range(3):
+                accel_int16 = (256 * payload[2*i+12] + payload[2*i+13]) - 65535 if 256 * payload[2*i+12] + payload[2*i+13] > 32767  else  256 * payload[2*i+12] + payload[2*i+13]
+                accels[i] = (20 * accel_int16) / math.pow(2,16)
+            vel = [0 for x in range(3)] 
+            for i in range(3):
+                vel_int16 = (256 * payload[2*i+18] + payload[2*i+19]) - 65535 if 256 * payload[2*i+18] + payload[2*i+19] > 32767  else  256 * payload[2*i+18] + payload[2*i+19]
+                vel[i] = (512 * vel_int16) / math.pow(2,16)
+            
+            tude = [0 for x in range(3)] 
+            for i in range(2):
+                tude_int32 = (16777216 * payload[2*i+24] + 65536 * payload[2*i+25] + 256 * payload[2*i+26] + payload[27]) - 2147483648 if 16777216 * payload[2*i+24] + 65536 *  payload[2*i+25] + 256 * payload[2*i+26] + payload[27] > 2147483647  else  16777216 * payload[2*i+24] + 65536 * payload[2*i+25] + 256 * payload[2*i+26] + payload[27]
+                tude[i] = (2 * math.pi * tude_int32) / math.pow(2,32)
+       
+            # altitude
+            tude_int16 = 256 * payload[32] + payload[33];
+            tude[2] = (16384 * tude_int16) / math.pow(2,16); 
+           
+            temp_int16 = (256 * payload[2*i+34] + payload[2*i+35]) - 65535 if 256 * payload[2*i+34] + payload[2*i+35] > 32767  else  256 * payload[2*i+34] + payload[2*i+35]
+            temp = (200 * temp_int16) / math.pow(2,16)
+
+            # Counter Value
+            itow = 256 * payload[28] + payload[29]   
+
+            data = collections.OrderedDict([('rollAngle', angles[0]),('pitchAngle', angles[1]),('yawAngleMag', angles[2]), \
+                    ('xRateCorrected' , gyros[0]), ('yRateCorrected' , gyros[1]), ('zRateCOrrected', gyros[2]), \
+                    ( 'xAccel', accels[0]), ('yAccel', accels[1]), ('zAccel', accels[2]), \
+                    ( 'nVel', vel[0]), ('eVel', vel[1]), ('dVel', vel[2]), \
+                    ( 'longitude', tude[0]), ('latitude', tude[1]), ('altitude', tude[2]), \
+                    ('xRateTemp', temp), ('iTOW', itow)])
+
+
+            if self.logging == 1 and self.logger is not None:
+                self.logger.log(data, self.odr_setting) 
+            
+            return data
+            
+        elif self.packet_type == 'T0':
+            '''T0 Payload Contents
+                Byte Offset	Name	 Format	Scaling	Units	Description
+                0	BitStatus        U2	                Master BIT and Status Field 
+                2	hardwareBIT      U2	                Hardware BIT Field 
+                4	hardwarePowerBIT U2	                Hardware Power BIT Field 
+                6	hardwareEnvironmentalBIT U2             Hardware Environmental BIT Field	
+                8	comBit           U2                     communication BIT Field
+                10	comSerialABIT    U2	                Communication Serial A BIT Field
+                12      comSerialBBIT    U2                     Communication Serial B BIT Field	
+                14	softwareBIT      U2                     Software BIT Filed	
+                16	softwareAlgorithmBIT U2	                Software Algorithm BIT Field
+                18	softwareDataBIT  U2	                Software Data BIT Field
+                20	hardwareStatus   U2	                Hardware Status Field
+                22	comStatus        U2	                Communication Status Field
+                24	softwareStatus   U2	                Software Status Field
+                26	sensorStatus     U2                     Sensor Status Field'''
+            
+            # BIT Status 
+            bitStatus = 256 * payload[0] + payload[1]         
+
+            # hardware bit 
+            hardwareBit= 256 * payload[2] + payload[3]         
+
+            # hardware power bit 
+            hardwarePowerBit= 256 * payload[4] + payload[5]         
+
+            # hardware environmental bit 
+            hardwareEnvironmentalBit= 256 * payload[6] + payload[7]         
+
+            # com bit 
+            comBit = 256 * payload[8] + payload[9]         
+
+            # com serial A bit 
+            comSerialABit = 256 * payload[10] + payload[11]         
+
+            # com serial B bit 
+            comSerialBBit = 256 * payload[12] + payload[13]         
+
+            # software bit 
+            softwareBit= 256 * payload[14] + payload[15]         
+
+            # software algorithm bit 
+            softwareAlgBit= 256 * payload[16] + payload[17]         
+
+            # software data bit 
+            softwareDataBit= 256 * payload[18] + payload[19]         
+
+            # hardware status 
+            hardwareStatus = 256 * payload[20] + payload[21]         
+
+            # com status 
+            comStatus = 256 * payload[22] + payload[23]         
+
+            # software status 
+            softwareStatus = 256 * payload[24] + payload[25]         
+
+            # sensor status 
+            sensorStatus = 256 * payload[26] + payload[27]         
+
+            data = collections.OrderedDict([( 'bitStatus', bitStatus), ('hardware bit', hardwareBit), ('hardwarePowerBit', hardwarePowerBit), \
+                   ('hardwareEnvironmentalBit', hardwareEnvironmentalBit), ('comBit', comBit), ('com Serial A Bit', comSerialABit), \
+                   ('com Serial B Bit', comSerialBBit), ('software bit', softwareBit), ('software algorithm bit', softwareAlgBit), \
+                   ('software data bit', softwareDataBit), ('hardware status', hardwareStatus), ('com status', comStatus), \
+                   ('software status', softwareStatus), ('sensor status', sensorStatus)])
 
 
             if self.logging == 1 and self.logger is not None:
@@ -763,6 +1112,7 @@ class GrabIMU380Data:
                 else:
                     data[i] = [256 * payload[i*4+1] + payload[i*4+2], 256 * payload[i*4+3] + payload[i*4+4]]
             return data
+
         elif self.packet_type == 'GF':
             n = payload[0]
             data = [0] * n  #empty array
