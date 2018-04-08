@@ -201,7 +201,7 @@ class GrabIMU380Data:
             if packet_crc == calc_crc:
                 self.packet_type = '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
                 data = self.parse_packet(R[5:R[4]+5], ws)
-        self.restore_odr()
+        # self.restore_odr()
         return data
     
     def read_fields(self,fields, ws = False): 
@@ -230,7 +230,7 @@ class GrabIMU380Data:
             if packet_crc == calc_crc:
                 self.packet_type = '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
                 data = self.parse_packet(R[5:R[4]+5], ws)
-        self.restore_odr()
+        # self.restore_odr()
         return data
     
     def write_fields(self, field_value_pairs, ws=False):
@@ -327,6 +327,23 @@ class GrabIMU380Data:
         time.sleep(0.1) # wait for command to take effect
         self.ser.reset_input_buffer()
     
+    def restore_odr(self):
+        '''Force 380 device to quiet / polled mode and inject 0.1 second delay, then clear input buffer.
+        Currently Forces to 100Hz
+        '''
+        self.stream_mode = 0
+        C = [0x55, 0x55, ord('S'), ord('F'), 0x05 , 0x01, 0x00, 0x01, 0x00, 0x01]
+        crc = self.calc_crc(C[2:C[4]+5])   
+        crc_msb = (crc & 0xFF00) >> 8
+        crc_lsb = (crc & 0x00FF)
+        C.insert(len(C), crc_msb)
+        C.insert(len(C), crc_lsb)
+        self.ser.reset_input_buffer()
+        self.ser.write(C)
+        self.ser.read(10)
+        time.sleep(0.1) # wait for command to take effect
+        self.ser.reset_input_buffer()
+    
     def stream(self):
         '''Set 380 to odr_setting and connect.  Assume find_device has already occured at some prior point
         ''' 
@@ -336,9 +353,6 @@ class GrabIMU380Data:
         if self.odr_setting:
             self.restore_odr()
             self.connect()
-    
-    def restore_odr(self):
-        self.set_fields([[0x0001, self.odr_setting]])
         
     def connect(self):
         '''Continous data collection loop to get and process data packets in stream mode
@@ -361,7 +375,7 @@ class GrabIMU380Data:
             # Read next packet of data based on expected packet size     
             S = bytearray(self.ser.read(self.packet_size + 7))   
  
-            if not len(S):
+            if len(S) < 2:
                 # Read Failed
                 self.stream_mode = 0                    
                 return
@@ -398,6 +412,7 @@ class GrabIMU380Data:
             return False
         if S[0] == 85 and prev_byte == 85:      # VALID HEADER FOUND
             # Once header is found then read off the rest of packet
+            print('Connected!')
             self.stream_mode = 1
             config_bytes = bytearray(self.ser.read(3))
             self.packet_type = '{0:1c}'.format(config_bytes[0]) + '{0:1c}'.format(config_bytes[1])
@@ -409,6 +424,7 @@ class GrabIMU380Data:
             if bytes_read == 0:
                 print('Connecting ....')
             bytes_read = bytes_read + 1
+            print(bytes_read)
             self.stream_mode = 0
             if (bytes_read < 40):
                 self.sync(S[0], bytes_read)
