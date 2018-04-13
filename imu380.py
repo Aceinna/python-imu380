@@ -1,5 +1,3 @@
-
-
 """
 Driver for Aceinna 380/381 Series Products
 Based on PySerial https://github.com/pyserial/pyserial
@@ -83,7 +81,7 @@ class GrabIMU380Data:
         ''' 
         
         for port in ports:
-            for baud in [115200, 57600, 38400, 19200, 9600]:
+            for baud in [38400, 57600, 115200]:
                 self.ser = serial.Serial(port, baud, timeout = 0.1)
                 # sync() works for stream mode
                 self.sync()
@@ -95,7 +93,7 @@ class GrabIMU380Data:
             
             # stream mode not found for port, check port by polling
             if self.stream_mode == 0:  
-                for baud in [115200, 57600, 38400, 19200, 9600]:
+                for baud in [38400, 57600, 115200]:
                     self.ser = serial.Serial(port, baud, timeout = 0.1)
                     self.device_id = self.get_id_str()
                     if self.device_id:
@@ -111,12 +109,12 @@ class GrabIMU380Data:
 
             # in stream stream mode worked, get odr field and id str
             else:
-                odr = self.read_fields([0x0001])
+                odr = self.read_fields([0x0001], 1)
                 if odr:
+                    print('ODR: ')
                     print(odr)
-                    # self.odr_setting = sum(odr[3:5])    # read ODR field
-                    # TODO: this is an issue, not getting odr field view
-                    self.odr_setting = 0x0001
+                    self.odr_setting = odr[0][1]
+                    print(self.odr_setting)
                     self.device_id = self.get_id_str()  # read device string
                     self.restore_odr()
                     return True
@@ -159,7 +157,6 @@ class GrabIMU380Data:
             :returns:
                 True is successful
         '''
-
         self.stream_mode = 0      
         C = [0x55, 0x55, 0x50, 0x4B, 0x00]      # 0x55504B00
         crc = self.calc_crc(C[2:4] + [0x00])    # for some reason must add a payload byte to get correct CRC
@@ -284,6 +281,8 @@ class GrabIMU380Data:
         FIELD = 0
         VALUE = 1
         for field_value in field_value_pairs:
+            if (field_value[FIELD] == 1):
+                self.odr_setting = field_value[VALUE]
             field_msb = (field_value[FIELD] & 0xFF00)  >> 8
             field_lsb = field_value[FIELD] & 0x00FF  
             value_msb = (field_value[VALUE] & 0xFF00) >> 8
@@ -332,7 +331,7 @@ class GrabIMU380Data:
         Currently Forces to 100Hz
         '''
         self.stream_mode = 0
-        C = [0x55, 0x55, ord('S'), ord('F'), 0x05 , 0x01, 0x00, 0x01, 0x00, 0x01]
+        C = [0x55, 0x55, ord('S'), ord('F'), 0x05 , 0x01, 0x00, 0x01, 0x00, self.odr_setting]
         crc = self.calc_crc(C[2:C[4]+5])   
         crc_msb = (crc & 0xFF00) >> 8
         crc_lsb = (crc & 0x00FF)
@@ -480,7 +479,7 @@ class GrabIMU380Data:
     def write_block(self, buf, data_len, addr):
         '''Executed WA command to write a block of new app code into memory
         '''
-        print(data_len, addr);
+        print(data_len, addr)
         C = [0x55, 0x55, ord('W'), ord('A'), data_len+5]
         addr_3 = (addr & 0xFF000000) >> 24
         addr_2 = (addr & 0x00FF0000) >> 16
