@@ -72,6 +72,13 @@ class WSHandler(tornado.websocket.WebSocketHandler):
                 data = imu.write_fields(setData, True)
                 # should be improved to really use data readback in UART protocol, and cross check values set correctly
                 self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "writeFields" : setData }}))
+            elif list(message['data'].keys())[0] == 'startStream':
+                imu.set_quiet()
+                imu.restore_odr()
+                threading.Thread(target=imu.connect).start()
+                self.callback.start()  
+            elif list(message['data'].keys())[0] == 'stopStream':
+                imu.set_quiet()
 
         elif message['messageType'] == 'start_log' and imu.logging == 0:
             imu.start_log('cloud') # log to cloud
@@ -79,11 +86,6 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         elif message['messageType'] == 'stop_log' and imu.logging == 1:
             imu.stop_log()
             self.write_message(json.dumps({ 'logfile' : '' }))
-        elif message['messageType'] == 'stream':
-            imu.set_quiet()
-            imu.restore_odr()
-            threading.Thread(target=imu.connect).start()
-            self.callback.start()
         
 
     def on_close(self):
