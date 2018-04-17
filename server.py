@@ -79,14 +79,30 @@ class WSHandler(tornado.websocket.WebSocketHandler):
                 self.callback.start()  
             elif list(message['data'].keys())[0] == 'stopStream':
                 imu.set_quiet()
+            elif list(message['data'].keys())[0] == 'startLog' and imu.logging == 0:
+                imu.set_quiet()
+                imu.restore_odr()
+                threading.Thread(target=imu.connect).start()
+                imu.start_log() 
+                self.callback.start()  
+                self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "logfile" : imu.logger.name }}))
+            elif list(message['data'].keys())[0] == 'stopLog' and imu.logging == 1:
+                imu.stop_log()
+                imu.set_quiet()
+                imu.restore_odr()
+                threading.Thread(target=imu.connect).start()
+                self.callback.start()                  
+                self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "logfile" : '' }}))
+            elif list(message['data'].keys())[0] == 'listFiles':
+                imu.set_quiet()
+                logfiles = [f for f in os.listdir('data') if os.path.isfile(os.path.join('data', f))]
+                self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "listFiles" : logfiles }}))
+            elif list(message['data'].keys())[0] == 'loadFile':
+                imu.set_quiet()
+                print(message['data']['loadFile']['graph_id'])
+                f = open("data/" + message['data']['loadFile']['graph_id'],"r")
+                self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "loadFile" :  f.read() }}))
 
-        elif message['messageType'] == 'start_log' and imu.logging == 0:
-            imu.start_log('cloud') # log to cloud
-            self.write_message(json.dumps({ 'logfile' : imu.logger.name }))
-        elif message['messageType'] == 'stop_log' and imu.logging == 1:
-            imu.stop_log()
-            self.write_message(json.dumps({ 'logfile' : '' }))
-        
 
     def on_close(self):
         self.__start = 0

@@ -12,13 +12,13 @@ class LogIMU380Data:
         '''Initialize and create a CSV file
         '''
         self.name = 'data-' + datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S') + '.csv'
-        self.file = open(self.name, 'w')
+        self.file = open('data/' + self.name, 'w')
         self.first_row = 0
 
     def log(self, data, odr_setting): 
         '''Write row of CSV file based on data received.  Uses dictionary keys for column titles
         '''
-        odr_rates = { 0: 0, 1 : 100, 2 : 50, 5 : 25, 10 : 20, 20 : 10, 25 : 5, 50 : 2 }
+        odr_rates = { 0: 0, 1 : 100, 2 : 50, 4 : 25  }
         delta_t = 1.0 / odr_rates[odr_setting]
 
         if not self.first_row:
