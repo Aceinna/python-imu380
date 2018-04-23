@@ -19,16 +19,14 @@ class WSHandler(tornado.websocket.WebSocketHandler):
     def get_time(self):
         self.__time += 1
         return self.__time
-        self.__start = 0
 
     def open(self):
         self.__time = 1
-        self.__start = 1
-        self.callback = PeriodicCallback(self.send_data, 33.3)
+        self.callback = PeriodicCallback(self.send_data, 50)
         self.callback.start()
         
     def send_data(self):
-        if self.__start:
+        if imu.connect and imu.stream_mode:
             d = imu.get_latest()
             d['time'] = self.get_time()
             self.write_message(json.dumps({ 'messageType' : 'event',  'data' : { 'newOutput' : d }}))
@@ -36,17 +34,17 @@ class WSHandler(tornado.websocket.WebSocketHandler):
     def on_message(self, message):
         global imu
         message = json.loads(message)
-        if message['messageType'] != 'serverStatus':
+        # Except for a few exceptions stop the automatic message transmission if a message is received
+        if message['messageType'] != 'serverStatus' and list(message['data'].keys())[0] != 'startLog' and list(message['data'].keys())[0] != 'stopLog':
             self.callback.stop()
-            imu.disconnect()
             time.sleep(1)
         if message['messageType'] == 'serverStatus':
             if imu.device_id:
                 with open('imu.json') as json_data:
                     imuProperties = json.load(json_data)
-                self.write_message(json.dumps({ 'messageType' : 'serverStatus', 'data' : { 'serverVersion' : server_version, 'deviceId' : imu.device_id, 'deviceProperties' : imuProperties }}))
+                self.write_message(json.dumps({ 'messageType' : 'serverStatus', 'data' : { 'serverVersion' : server_version, 'deviceId' : imu.device_id, 'deviceProperties' : imuProperties, 'logging' : imu.logging }}))
             else:
-                self.write_message(json.dumps({ 'messageType' : 'serverStatus', 'data' : { 'serverVersion' : server_version, 'deviceId' : imu.device_id }}))
+                self.write_message(json.dumps({ 'messageType' : 'serverStatus', 'data' : { 'serverVersion' : server_version, 'deviceId' : imu.device_id, 'logging' : imu.logging }}))
         elif message['messageType'] == 'requestAction':
             if list(message['data'].keys())[0] == 'getFields':
                 data = imu.get_fields(list(map(int,message['data']['getFields'].keys())), True)
@@ -73,49 +71,41 @@ class WSHandler(tornado.websocket.WebSocketHandler):
                 # should be improved to really use data readback in UART protocol, and cross check values set correctly
                 self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "writeFields" : setData }}))
             elif list(message['data'].keys())[0] == 'startStream':
-                imu.set_quiet()
                 imu.restore_odr()
-                threading.Thread(target=imu.connect).start()
                 self.callback.start()  
             elif list(message['data'].keys())[0] == 'stopStream':
                 imu.set_quiet()
-            elif list(message['data'].keys())[0] == 'startLog' and imu.logging == 0:
-                imu.set_quiet()
-                imu.restore_odr()
-                threading.Thread(target=imu.connect).start()
+            elif list(message['data'].keys())[0] == 'startLog' and imu.logging == 0: 
                 imu.start_log() 
-                self.callback.start()  
                 self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "logfile" : imu.logger.name }}))
-            elif list(message['data'].keys())[0] == 'stopLog' and imu.logging == 1:
-                imu.stop_log()
-                imu.set_quiet()
-                imu.restore_odr()
-                threading.Thread(target=imu.connect).start()
-                self.callback.start()                  
+            elif list(message['data'].keys())[0] == 'stopLog' and imu.logging == 1: 
+                imu.stop_log()                
                 self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "logfile" : '' }}))
             elif list(message['data'].keys())[0] == 'listFiles':
-                imu.set_quiet()
-                logfiles = [f for f in os.listdir('data') if os.path.isfile(os.path.join('data', f))]
+                logfiles = [f for f in os.listdir('data') if os.path.isfile(os.path.join('data', f)) and f.endswith(".csv")]
                 self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "listFiles" : logfiles }}))
             elif list(message['data'].keys())[0] == 'loadFile':
-                imu.set_quiet()
                 print(message['data']['loadFile']['graph_id'])
                 f = open("data/" + message['data']['loadFile']['graph_id'],"r")
                 self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "loadFile" :  f.read() }}))
 
 
     def on_close(self):
-        self.__start = 0
-        # imu.disconnect()
+        self.callback.stop()
 
     def check_origin(self, origin):
         return True
  
 if __name__ == "__main__":
-    application = tornado.web.Application([(r'/', WSHandler)])
+    # Create IMU
     imu = imu380.GrabIMU380Data(ws=True)
-    threading.Thread(target=imu.stream).start()
-    print('starting web socket server')
+    # Place IMU in thread and ask it to connect itself 
+    threading.Thread(target=imu.connect).start()
+    
+    # Set up Websocket server on Port 8000
+    # Port can be changed
+    application = tornado.web.Application([(r'/', WSHandler)])
     http_server = tornado.httpserver.HTTPServer(application)
     http_server.listen(8000)
     tornado.ioloop.IOLoop.instance().start()
+    

@@ -5,13 +5,64 @@ Created on 2017-10-01
 @author: m5horton
 """
 
+"""
+WS Master Connection 
+connect         - finds device, gets device_id/odr_setting, and loops
+                - run this in thread otherwise blocking
+disconnect      - ends loop
+
+Device Discovery
+find_device     - entry point to find a serial connected IMU
+find_ports
+autobaud
+
+Logging
+start_log
+stop_log
+
+Control EEPROM Config Fields
+get_fields
+set_fields
+read_fields
+write_fields
+
+Bootloader Functions
+upgrade_fw      - entry point to flash a serial connected IMU
+start_bootloader
+write_block
+start_app
+
+Syncing 
+sync            - trys to sync to a unit continuously transmitting
+set_quiet       - sets unit to stop continuous transmission (stream_mode = 0)
+restore_odr     - restores unit to whatever odr_setting is
+
+Data Functions
+get_latest
+get_packet
+get_id_str
+get_bit_status
+parse_packet
+calc_crc
+
+Serial          - a tiny layer on top of Pyserial to handle exceptions as means of device detection
+open
+close
+read
+write
+reset_buffer
+
+Ping
+ping_test
+
+"""
+
 import serial
 import math
 import string
 import quat
 import time
 import sys
-import aceinna_storage
 import file_storage
 import collections
 import glob
@@ -22,20 +73,17 @@ class GrabIMU380Data:
         '''
         self.ws = ws                # set to true if being run as a thread in a websocket server
         self.ser = None             # the active UART
-        self.stream_mode = 0        # 0 = polled, 1 = streaming
+        self.synced = 0             # synced status in streaming mode
+        self.stream_mode = 0        # 0 = polled, 1 = streaming, commanded by set_quiet and restore_odr
         self.device_id = 0          # unit's id str
-        self.odr_setting = 0        # hex code of the ODR field (0x0001)
+        self.connected = 0          # imu is successfully connected to a com port, kind of redundant with device_id property
+        self.odr_setting = 0        # value of the output data rate EEPROM setting
         self.logging = 0            # logging on or off
-        self.logger = None          # the file or cloud logger
-        self.packet_size = 0        
-        self.packet_type = 0        
+        self.logger = None          # the file logger instance
+        self.packet_size = 0        # expected size of packet 
+        self.packet_type = 0        # expected type of packet
         self.data = {}              # placeholder imu measurements of last converted packeted
        
-        # automatically find and connect to the IMU  380 automatically when not in a WebSocket server
-        if not self.ws:
-            self.find_device()
-
-
     def find_device(self):
         ''' Finds active ports and then autobauds units, repeats every 2 seconds
         '''
@@ -75,14 +123,13 @@ class GrabIMU380Data:
 
     def autobaud(self, ports):
         '''Autobauds unit - first check for stream_mode / continuous data, then check by polling unit
-           Converts resets polled unit (temporarily) to 100Hz ODR
            :returns: 
                 true when successful
         ''' 
         
         for port in ports:
-            for baud in [38400, 57600, 115200]:
-                self.ser = serial.Serial(port, baud, timeout = 0.1)
+            for baud in [115200, 57600, 38400]:
+                self.open(port, baud)
                 # sync() works for stream mode
                 self.sync()
                 if self.stream_mode:
@@ -93,30 +140,29 @@ class GrabIMU380Data:
             
             # stream mode not found for port, check port by polling
             if self.stream_mode == 0:  
-                for baud in [38400, 57600, 115200]:
-                    self.ser = serial.Serial(port, baud, timeout = 0.1)
+                for baud in [115200, 57600, 38400]:
+                    self.open(port, baud)
                     self.device_id = self.get_id_str()
                     if self.device_id:
                         print('Connected Polled Mode ' + '{0:d}'.format(baud))
-                        # return it to streamed mode and sync
-                        self.odr_setting = 0x01
-                        self.set_fields([[0x0001, self.odr_setting]])
-                        self.sync()     
-                        print('Now Connectd Stream Mode ' + '{0:d}'.format(baud)) 
-                        return True               
+                        odr = self.read_fields([0x0001], 1)
+                        if odr:
+                            print('Saved ODR: ' + '{0:d}'.format(odr[0][1]))
+                            self.odr_setting = odr[0][1]
+                        self.connected = 1
+                        return True; 
                     else:
-                        self.ser.close()
+                        self.close()
 
             # in stream stream mode worked, get odr field and id str
             else:
                 odr = self.read_fields([0x0001], 1)
                 if odr:
-                    print('ODR: ')
-                    print(odr)
+                    print('Current ODR: ' + '{0:d}'.format(odr[0][1]))
                     self.odr_setting = odr[0][1]
-                    print(self.odr_setting)
                     self.device_id = self.get_id_str()  # read device string
                     self.restore_odr()
+                    self.connected = 1                  # a valid connection exists to unit
                     return True
                 else:
                     print('failed to get id string')
@@ -132,18 +178,15 @@ class GrabIMU380Data:
         if self.stream_mode == 1:
             return self.data
         else: 
-            return { 'error' : 'Not connected' }
+            return { 'error' : 'not streaming' }
     
     def start_log(self, type = False):
         '''Creates file or cloud logger.  Autostarts log activity if ws (websocket) set to false
         '''
         self.logging = 1
-        if (type == 'cloud'):
-            self.logger = aceinna_storage.LogIMU380Data()
-        else:
-            self.logger = file_storage.LogIMU380Data()
+        self.logger = file_storage.LogIMU380Data()
         if self.ws == False and self.odr_setting != 0:
-            self.stream()
+            self.connect()
     
     def stop_log(self):
         '''Stops file or cloud logger
@@ -164,10 +207,10 @@ class GrabIMU380Data:
         crc_lsb = (crc & 0x00FF)
         C.insert(len(C), crc_msb)
         C.insert(len(C), crc_lsb)
-        self.ser.reset_input_buffer()
-        self.ser.write(C)
-        R = self.ser.read(7)                    # grab with header, type, length, and crc
-        if bytearray(R) == bytearray(C):
+        self.reset_buffer()
+        self.write(C)
+        R = self.read(7)                    # grab with header, type, length, and crc
+        if R == bytearray(C):
             return True
         else: 
             return False
@@ -189,16 +232,15 @@ class GrabIMU380Data:
         crc_lsb = (crc & 0x00FF)
         C.insert(len(C), crc_msb)
         C.insert(len(C), crc_lsb)
-        self.ser.write(C)
-        R = bytearray(self.ser.read(num_fields * 4 + 1 + 7))
+        self.write(C)
+        R = self.read(num_fields * 4 + 1 + 7)
         data = []
-        if R[0] == 85 and R[1] == 85:
+        if R and R[0] == 85 and R[1] == 85:
             packet_crc = 256 * R[-2] + R[-1]                   # crc is last two bytes
             calc_crc = self.calc_crc(R[2:R[4]+5])
             if packet_crc == calc_crc:
                 self.packet_type = '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
                 data = self.parse_packet(R[5:R[4]+5], ws)
-        # self.restore_odr()
         return data
     
     def read_fields(self,fields, ws = False): 
@@ -218,8 +260,8 @@ class GrabIMU380Data:
         crc_lsb = (crc & 0x00FF)
         C.insert(len(C), crc_msb)
         C.insert(len(C), crc_lsb)
-        self.ser.write(C)
-        R = bytearray(self.ser.read(num_fields * 4 + 1 + 7))
+        self.write(C)
+        R = self.read(num_fields * 4 + 1 + 7)
         data = []
         if len(R) and R[0] == 85 and R[1] == 85:
             packet_crc = 256 * R[-2] + R[-1]                   # crc is last two bytes
@@ -227,7 +269,6 @@ class GrabIMU380Data:
             if packet_crc == calc_crc:
                 self.packet_type = '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
                 data = self.parse_packet(R[5:R[4]+5], ws)
-        # self.restore_odr()
         return data
     
     def write_fields(self, field_value_pairs, ws=False):
@@ -256,9 +297,9 @@ class GrabIMU380Data:
         crc_lsb = (crc & 0x00FF)
         C.insert(len(C), crc_msb)
         C.insert(len(C), crc_lsb)
-        self.ser.write(C)
+        self.write(C)
         time.sleep(1.0)
-        R = bytearray(self.ser.read(num_fields * 2 + 1 +7))
+        R = self.read(num_fields * 2 + 1 +7)
         print(R)
         data = []
         if R[0] == 85 and R[1] == 85:
@@ -296,8 +337,8 @@ class GrabIMU380Data:
         crc_lsb = (crc & 0x00FF)
         C.insert(len(C), crc_msb)
         C.insert(len(C), crc_lsb)
-        self.ser.write(C)
-        R = bytearray(self.ser.read(num_fields * 2 + 1 +7))
+        self.write(C)
+        R = self.read(num_fields * 2 + 1 +7)
         data = []
         if R[0] == 85 and R[1] == 85:
             packet_crc = 256 * R[-2] + R[-1]                   # crc is last two bytes
@@ -313,71 +354,78 @@ class GrabIMU380Data:
     def set_quiet(self):
         '''Force 380 device to quiet / polled mode and inject 0.1 second delay, then clear input buffer
         '''
-        self.stream_mode = 0
+        self.stream_mode = 0 
+        time.sleep(0.1) # wait for any packets to clear
         C = [0x55, 0x55, ord('S'), ord('F'), 0x05 , 0x01, 0x00, 0x01, 0x00, 0x00]
         crc = self.calc_crc(C[2:C[4]+5])   
         crc_msb = (crc & 0xFF00) >> 8
         crc_lsb = (crc & 0x00FF)
         C.insert(len(C), crc_msb)
         C.insert(len(C), crc_lsb)
-        self.ser.reset_input_buffer()
-        self.ser.write(C)
-        self.ser.read(10)
+        self.reset_buffer()
+        self.write(C)
+        self.read(10)
         time.sleep(0.1) # wait for command to take effect
-        self.ser.reset_input_buffer()
+        self.reset_buffer()
     
     def restore_odr(self):
-        '''Force 380 device to quiet / polled mode and inject 0.1 second delay, then clear input buffer.
-        Currently Forces to 100Hz
+        '''Restores device to odr mode vs SF command
         '''
-        self.stream_mode = 0
+        print('restore odr to ' + '{0:d}'.format(self.odr_setting))
         C = [0x55, 0x55, ord('S'), ord('F'), 0x05 , 0x01, 0x00, 0x01, 0x00, self.odr_setting]
         crc = self.calc_crc(C[2:C[4]+5])   
         crc_msb = (crc & 0xFF00) >> 8
         crc_lsb = (crc & 0x00FF)
         C.insert(len(C), crc_msb)
         C.insert(len(C), crc_lsb)
-        self.ser.reset_input_buffer()
-        self.ser.write(C)
-        self.ser.read(10)
+        self.reset_buffer()
+        self.write(C)
+        self.read(10)
         time.sleep(0.1) # wait for command to take effect
-        self.ser.reset_input_buffer()
-    
-    def stream(self):
-        '''Set 380 to odr_setting and connect.  Assume find_device has already occured at some prior point
-        ''' 
-        if self.ws:
-            self.find_device()
+        self.reset_buffer()
+        self.synced = 0
+        self.packet_size = 0        
+        self.packet_type = 0  
+        self.stream_mode = 1
+          
+    def connect(self):
+        '''Continous data collection loop to get and process data packets
+        '''
+        self.find_device()
 
         if self.odr_setting:
             self.restore_odr()
-            self.connect()
-        
-    def connect(self):
-        '''Continous data collection loop to get and process data packets in stream mode
-        '''
-        self.connected = 1
-        while self.connected:
-            #self.get_bit_status()
-            self.get_packet()
-        return  # ends thread
-
+        else:
+            print('no odr setting can connect')
+            return
+        while self.odr_setting and self.connected:
+            if self.stream_mode:
+                self.get_packet()
+            else:
+                time.sleep(0.05)
+      
     def disconnect(self):
-        '''Ends data collection loop
+        '''Ends data collection loop.  Reset settings
         '''
         self.connected = 0
-
+        self.device_id = 0
+        self.odr_setting = 0
+        self.stream_mode = 0
+        self.synced = 0
+        self.packet_size = 0        
+        self.packet_type = 0        
+      
     def get_packet(self):
         '''Syncs unit and gets packet.  Assumes unit is in stream_mode'''
 
         # Already synced
-        if self.stream_mode == 1:    
+        if self.synced == 1:    
             # Read next packet of data based on expected packet size     
-            S = bytearray(self.ser.read(self.packet_size + 7))   
- 
+            S = self.read(self.packet_size + 7)
+            
             if len(S) < 2:
                 # Read Failed
-                self.stream_mode = 0                    
+                self.synced = 0                    
                 return
             if S[0] == 85 and S[1] == 85:
                 packet_crc = 256 * S[-2] + S[-1]    
@@ -401,23 +449,18 @@ class GrabIMU380Data:
             :returns:
                 true if synced, false if not
         '''
-        try:    
-            S = bytearray(self.ser.read(1))
-        except serial.SerialException:
-            S = []
-            print('serial exception')
-            self.find_device()
-
-        if not len(S):
+        S = self.read(1)
+      
+        if not S:
             return False
         if S[0] == 85 and prev_byte == 85:      # VALID HEADER FOUND
             # Once header is found then read off the rest of packet
-            print('Connected!')
-            self.stream_mode = 1
-            config_bytes = bytearray(self.ser.read(3))
+            print('Synced!')
+            self.synced = 1
+            config_bytes = self.read(3)
             self.packet_type = '{0:1c}'.format(config_bytes[0]) + '{0:1c}'.format(config_bytes[1])
             self.packet_size = config_bytes[2]
-            bytearray(self.ser.read(config_bytes[2] + 2))      # clear bytes off port, payload + 2 byte CRC
+            self.read(config_bytes[2] + 2)      # clear bytes off port, payload + 2 byte CRC
             return True
         else: 
             # Repeat sync to search next byte pair for header
@@ -425,7 +468,7 @@ class GrabIMU380Data:
                 print('Connecting ....')
             bytes_read = bytes_read + 1
             print(bytes_read)
-            self.stream_mode = 0
+            self.synced = 0
             if (bytes_read < 40):
                 self.sync(S[0], bytes_read)
             else:
@@ -443,16 +486,16 @@ class GrabIMU380Data:
         crc_lsb = (crc & 0x00FF)
         C.insert(len(C), crc_msb)
         C.insert(len(C), crc_lsb)
-        self.ser.write(C)
+        self.write(C)
         time.sleep(1)   # must wait for boot loader to be ready
-        R = bytearray(self.ser.read(5)) 
+        R = self.read(5)
         if R[0] == 85 and R[1] == 85:
             self.packet_type =  '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
             if self.packet_type == 'JI':
-                self.ser.read(R[4]+2)
+                self.read(R[4]+2)
                 print('bootloader ready')
                 time.sleep(2)
-                self.ser.reset_input_buffer()
+                self.reset_buffer()
                 return True
             else: 
                 return False
@@ -469,9 +512,9 @@ class GrabIMU380Data:
         crc_lsb = (crc & 0x00FF)
         C.insert(len(C), crc_msb)
         C.insert(len(C), crc_lsb)
-        self.ser.write(C)
+        self.write(C)
         time.sleep(1)
-        R = bytearray(self.ser.read(7))    
+        R = self.read(7)    
         if R[0] == 85 and R[1] == 85:
             self.packet_type =  '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
             print(self.packet_type)
@@ -499,10 +542,10 @@ class GrabIMU380Data:
         C.insert(len(C), crc_lsb)
         status = 0
         while (status == 0):
-            self.ser.write(C)
+            self.write(C)
             if addr == 0:
                time.sleep(10)
-            R = bytearray(self.ser.read(12))  #longer response
+            R = self.read(12)  #longer response
             if len(R) > 1 and R[0] == 85 and R[1] == 85:
                 self.packet_type =  '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
                 print(self.packet_type)
@@ -515,7 +558,7 @@ class GrabIMU380Data:
             else:
                 print(len(R))
                 print(R)
-                self.ser.reset_input_buffer()
+                self.reset_buffer()
                 time.sleep(1)
                 print('no packet')
                 sys.exit()
@@ -533,7 +576,6 @@ class GrabIMU380Data:
             print('Bootloader Start Failed')
             return False
        
-
         time.sleep(1)
         while (write_len < fs_len):
             packet_data_len = max_data_len if (fs_len - write_len) > max_data_len else (fs_len-write_len)
@@ -558,12 +600,12 @@ class GrabIMU380Data:
         crc_lsb = (crc & 0x00FF)
         C.insert(len(C), crc_msb)
         C.insert(len(C), crc_lsb)
-        self.ser.write(C)
-        R = bytearray(self.ser.read(5))    
+        self.write(C)
+        R = self.read(5)    
         if len(R) and R[0] == 85 and R[1] == 85:
             self.packet_type =  '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
             payload_length = R[4]
-            R = bytearray(self.ser.read(payload_length+2))
+            R = self.read(payload_length+2)
             id_str = self.parse_packet(R[0:payload_length])
             return id_str
         else: 
@@ -580,17 +622,16 @@ class GrabIMU380Data:
         crc_lsb = (crc & 0x00FF)
         C.insert(len(C), crc_msb)
         C.insert(len(C), crc_lsb)
-        self.ser.write(C)
-        R = bytearray(self.ser.read(5))    
+        self.write(C)
+        R = self.read(5)    
         if len(R) and R[0] == 85 and R[1] == 85:
             self.packet_type =  '{0:1c}'.format(R[2]) + '{0:1c}'.format(R[3])
             payload_length = R[4]
-            R = bytearray(self.ser.read(payload_length+2))
+            R = self.read(payload_length+2)
             id_str = self.parse_packet(R[0:payload_length])
             return id_str
         else: 
             return False
-
 
     def parse_packet(self, payload, ws = False):
         '''Parses packet payload to engineering units based on packet type
@@ -1150,6 +1191,50 @@ class GrabIMU380Data:
 
         crc = crc & 0xffff
         return crc
+
+    def open(self, port, baud):
+        try:
+            self.ser = serial.Serial(port, baud, timeout = 0.1)
+        except (OSError, serial.SerialException):
+            print('serial port open exception' + port)
+
+    def close(self):
+            self.ser.close()
+    
+    def read(self,n):
+        bytes = []
+        try: 
+            bytes = self.ser.read(n)
+        except:
+        # except (OSError, serial.SerialException):
+            self.disconnect()    # sets connected to 0, and other related parameters to initial values
+            print('serial exception read') 
+            self.connect() 
+        if bytes and len(bytes):
+            return bytearray(bytes)
+        else:
+            print('empty read') 
+            return bytearray(bytes)
+    
+    def write(self,n):
+        try: 
+            self.ser.write(n)
+        except:
+        # except (OSError, serial.SerialException):
+            self.disconnect()   # sets connected to 0, and other related parameters to initial values  
+            print('serial exception write')
+            self.connect() 
+
+    def reset_buffer(self):
+        try:
+            self.ser.reset_input_buffer()
+        except:
+        #except (OSError, serial.SerialException):
+            self.disconnect()   # sets connected to 0, and other related parameters to initial values
+            print('serial exception reset')   
+            self.connect() 
+
+        
 
 if __name__ == "__main__":
     grab = GrabIMU380Data()

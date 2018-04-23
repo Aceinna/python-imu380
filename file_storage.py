@@ -5,6 +5,11 @@ import time
 import uuid
 import datetime
 import json
+import requests
+import urllib2
+
+from azure.storage.blob import AppendBlobService
+from azure.storage.blob import ContentSettings
 
 class LogIMU380Data:
     
@@ -41,7 +46,40 @@ class LogIMU380Data:
         str = '{0:5.2f},'.format(delta_t * (self.first_row - 1)) + str
         str = str + '\r\n'
         self.file.write(header+str)
-    
+
+    def write_to_azure(self):
+        if not self.internet_on(): 
+            return False
+
+        # record file to cloud
+        self.append_blob_service = AppendBlobService(account_name='navview', account_key='+roYuNmQbtLvq2Tn227ELmb6s1hzavh0qVQwhLORkUpM0DN7gxFc4j+DF/rEla1EsTN2goHEA1J92moOM/lfxg==', protocol='http')
+        self.append_blob_service.create_blob(container_name='data', blob_name=self.name,  content_settings=ContentSettings(content_type='text/plain'))
+        f = open("data/" + self.name,"r")
+        self.append_blob_service.append_blob_from_text('data',self.name, f.read())
+
+        # TODO: check if success
+
+        # record record to ansplatform
+        self.record_to_ansplatform()
+
+
+    def record_to_ansplatform(self):
+        data = { "unit" : "1234", "mode" : "S1", "url" : self.name, "userId" : 1 }
+        url = "https://ans-platform.azurewebsites.net/api/datafiles/replaceOrCreate"
+        data_json = json.dumps(data)
+        headers = {'Content-type': 'application/json', 'Authorization' : 'Gmv1uXxMYdcDpqNMTJQLy4eicicCWNCRWv9r21aK7sWdauVVUQvxmCcR7S7xCbHq' }
+        response = requests.post(url, data=data_json, headers=headers)
+        response = response.json()
+        print(response)
+
+    def internet_on(self):
+        try:
+            urllib2.urlopen('https://ans-platform.azurewebsites.net', timeout=1)
+            return True
+        except urllib2.URLError as err: 
+            return False
+
     def close(self):
         self.file.close()
+        self.write_to_azure()
         self.name = ''
