@@ -180,11 +180,12 @@ class GrabIMU380Data:
         else: 
             return { 'error' : 'not streaming' }
     
-    def start_log(self, type = False):
+    def start_log(self, data):
         '''Creates file or cloud logger.  Autostarts log activity if ws (websocket) set to false
         '''
+        print(data)
         self.logging = 1
-        self.logger = file_storage.LogIMU380Data()
+        self.logger = file_storage.LogIMU380Data(self,data)
         if self.ws == False and self.odr_setting != 0:
             self.connect()
     

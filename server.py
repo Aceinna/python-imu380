@@ -76,7 +76,8 @@ class WSHandler(tornado.websocket.WebSocketHandler):
             elif list(message['data'].keys())[0] == 'stopStream':
                 imu.set_quiet()
             elif list(message['data'].keys())[0] == 'startLog' and imu.logging == 0: 
-                imu.start_log() 
+                data = message['data']['startLog']
+                imu.start_log(data) 
                 self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "logfile" : imu.logger.name }}))
             elif list(message['data'].keys())[0] == 'stopLog' and imu.logging == 1: 
                 imu.stop_log()                

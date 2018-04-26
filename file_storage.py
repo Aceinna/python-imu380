@@ -6,19 +6,28 @@ import uuid
 import datetime
 import json
 import requests
-import urllib2
+# need to find something python3 compatible  
+# import urllib2
 
 from azure.storage.blob import AppendBlobService
 from azure.storage.blob import ContentSettings
 
 class LogIMU380Data:
     
-    def __init__(self):
+    def __init__(self, imu, user):
         '''Initialize and create a CSV file
         '''
         self.name = 'data-' + datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S') + '.csv'
         self.file = open('data/' + self.name, 'w')
         self.first_row = 0
+        self.user = user
+        self.sn = imu.device_id.split(" ")[0]
+        self.pn = imu.device_id.split(" ")[1]
+        self.device_id = imu.device_id
+        self.odr_setting = imu.odr_setting
+        self.packet_type = imu.packet_type
+        odr_rates = { 0: 'Quiet', 1 : '100Hz', 2 : '50Hz', 4 : '25Hz'  }
+        self.sample_rate = odr_rates[self.odr_setting]
 
     def log(self, data, odr_setting): 
         '''Write row of CSV file based on data received.  Uses dictionary keys for column titles
@@ -28,10 +37,10 @@ class LogIMU380Data:
 
         if not self.first_row:
             self.first_row = 1
-            header = ''.join('{0:s},'.format(key) for key in data)
-            header = header[:-1]
-            header = 'sample,' + header
-            header = header + '\r\n'
+            labels = ''.join('{0:s},'.format(key) for key in data)
+            labels = labels[:-1]
+            labels = 'sample,' + labels
+            header = labels + '\r\n'
         else:
             self.first_row += 1
             header = ''
@@ -48,8 +57,9 @@ class LogIMU380Data:
         self.file.write(header+str)
 
     def write_to_azure(self):
-        if not self.internet_on(): 
-            return False
+        # check for internet 
+        # if not self.internet_on(): 
+        #    return False
 
         # record file to cloud
         self.append_blob_service = AppendBlobService(account_name='navview', account_key='+roYuNmQbtLvq2Tn227ELmb6s1hzavh0qVQwhLORkUpM0DN7gxFc4j+DF/rEla1EsTN2goHEA1J92moOM/lfxg==', protocol='http')
@@ -64,10 +74,11 @@ class LogIMU380Data:
 
 
     def record_to_ansplatform(self):
-        data = { "unit" : "1234", "mode" : "S1", "url" : self.name, "userId" : 1 }
+        data = { "pn" : self.pn, "sn": self.sn, "fileName" : self.user['fileName'],  "url" : self.name,
+                    "sampleRate" : self.sample_rate, "packetType" : self.packet_type, "userId" : self.user['id'] }
         url = "https://ans-platform.azurewebsites.net/api/datafiles/replaceOrCreate"
         data_json = json.dumps(data)
-        headers = {'Content-type': 'application/json', 'Authorization' : 'Gmv1uXxMYdcDpqNMTJQLy4eicicCWNCRWv9r21aK7sWdauVVUQvxmCcR7S7xCbHq' }
+        headers = {'Content-type': 'application/json', 'Authorization' : self.user['access_token'] }
         response = requests.post(url, data=data_json, headers=headers)
         response = response.json()
         print(response)
@@ -80,6 +91,6 @@ class LogIMU380Data:
             return False
 
     def close(self):
-        self.file.close()
         self.write_to_azure()
+        self.file.close()
         self.name = ''
