@@ -8,8 +8,6 @@ import time
 import math
 import imu380
 import threading
-import Tkinter
-import tkMessageBox
 import os
 
 server_version = '0.1 Beta'
