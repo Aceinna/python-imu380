@@ -6,6 +6,8 @@ import uuid
 import datetime
 import json
 import requests
+import threading
+
 # need to find something python3 compatible  
 # import urllib2
 
@@ -23,6 +25,7 @@ class LogIMU380Data:
         self.user = user
         if self.user['fileName'] == '':
             self.user['fileName'] = self.name
+        # decode converts out of byte array
         self.sn = imu.device_id.split(" ")[0]
         self.pn = imu.device_id.split(" ")[1]
         self.device_id = imu.device_id
@@ -80,6 +83,12 @@ class LogIMU380Data:
         response = requests.post(url, data=data_json, headers=headers)
         response = response.json()
         print(response)
+       
+        # clean up
+        self.file.close()
+        self.name = ''
+
+        return  #ends thread
 
     def internet_on(self):
         try:
@@ -89,6 +98,5 @@ class LogIMU380Data:
             return False
 
     def close(self):
-        self.write_to_azure()
-        self.file.close()
-        self.name = ''
+        time.sleep(0.1)
+        threading.Thread(target=self.write_to_azure).start()

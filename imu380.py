@@ -184,7 +184,6 @@ class GrabIMU380Data:
     def start_log(self, data):
         '''Creates file or cloud logger.  Autostarts log activity if ws (websocket) set to false
         '''
-        print(data)
         self.logging = 1
         self.logger = file_storage.LogIMU380Data(self,data)
         if self.ws == False and self.odr_setting != 0:
@@ -1185,8 +1184,8 @@ class GrabIMU380Data:
             print('Version String: {0}.{1}.{2}.{3}.{4}'.format(*payload))
         elif self.packet_type == 'ID':
             sn = int(payload[0] << 24) + int(payload[1] << 16) + int(payload[2] << 8) + int(payload[3])
-            print('ID String: {0} {1}'.format(sn,payload[4:]))
-            return '{0} {1}'.format(sn,payload[4:])
+            print('ID String: {0} {1}'.format(sn,payload[4:].decode()))
+            return '{0} {1}'.format(sn,payload[4:].decode())
 
     def calc_crc(self,payload):
         '''Calculates CRC per 380 manual
