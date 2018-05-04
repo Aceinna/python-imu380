@@ -42,7 +42,7 @@ class LogIMU380Data:
             self.first_row = 1
             labels = ''.join('{0:s},'.format(key) for key in data)
             labels = labels[:-1]
-            header = labels + '\r\n'
+            header = labels + '\n'
         else:
             self.first_row += 1
             header = ''
@@ -54,7 +54,7 @@ class LogIMU380Data:
             else:
                 str += '{0:3.5f},'.format(data[key])
         str = str[:-1]
-        str = str + '\r\n'
+        str = str + '\n'
         self.file.write(header+str)
 
     def write_to_azure(self):
