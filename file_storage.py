@@ -21,25 +21,24 @@ class LogIMU380Data:
         self.file = open('data/' + self.name, 'w')
         self.first_row = 0
         self.user = user
+        if self.user['fileName'] == '':
+            self.user['fileName'] = self.name
         self.sn = imu.device_id.split(" ")[0]
         self.pn = imu.device_id.split(" ")[1]
         self.device_id = imu.device_id
         self.odr_setting = imu.odr_setting
         self.packet_type = imu.packet_type
+        self.imu_properties = imu.imu_properties
         odr_rates = { 0: 'Quiet', 1 : '100Hz', 2 : '50Hz', 4 : '25Hz'  }
         self.sample_rate = odr_rates[self.odr_setting]
 
     def log(self, data, odr_setting): 
         '''Write row of CSV file based on data received.  Uses dictionary keys for column titles
         '''
-        odr_rates = { 0: 0, 1 : 100, 2 : 50, 4 : 25  }
-        delta_t = 1.0 / odr_rates[odr_setting]
-
         if not self.first_row:
             self.first_row = 1
             labels = ''.join('{0:s},'.format(key) for key in data)
             labels = labels[:-1]
-            labels = 'sample,' + labels
             header = labels + '\r\n'
         else:
             self.first_row += 1
@@ -52,7 +51,6 @@ class LogIMU380Data:
             else:
                 str += '{0:3.5f},'.format(data[key])
         str = str[:-1]
-        str = '{0:5.2f},'.format(delta_t * (self.first_row - 1)) + str
         str = str + '\r\n'
         self.file.write(header+str)
 
@@ -74,8 +72,8 @@ class LogIMU380Data:
 
 
     def record_to_ansplatform(self):
-        data = { "pn" : self.pn, "sn": self.sn, "fileName" : self.user['fileName'],  "url" : self.name,
-                    "sampleRate" : self.sample_rate, "packetType" : self.packet_type, "userId" : self.user['id'] }
+        data = { "pn" : self.pn, "sn": self.sn, "fileName" : self.user['fileName'],  "url" : self.name, "imuProperties" : json.dumps(self.imu_properties),
+                 "sampleRate" : self.sample_rate, "packetType" : self.packet_type, "userId" : self.user['id'] }
         url = "https://ans-platform.azurewebsites.net/api/datafiles/replaceOrCreate"
         data_json = json.dumps(data)
         headers = {'Content-type': 'application/json', 'Authorization' : self.user['access_token'] }

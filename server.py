@@ -14,21 +14,18 @@ import os
 
 server_version = '0.1 Beta'
 
+callback_rate = 50
+
 class WSHandler(tornado.websocket.WebSocketHandler):
             
-    def get_time(self):
-        self.__time += 1
-        return self.__time
-
     def open(self):
         self.__time = 1
-        self.callback = PeriodicCallback(self.send_data, 50)
+        self.callback = PeriodicCallback(self.send_data, callback_rate)
         self.callback.start()
         
     def send_data(self):
         if imu.connect and imu.stream_mode:
             d = imu.get_latest()
-            d['time'] = self.get_time()
             self.write_message(json.dumps({ 'messageType' : 'event',  'data' : { 'newOutput' : d }}))
 
     def on_message(self, message):
@@ -39,23 +36,32 @@ class WSHandler(tornado.websocket.WebSocketHandler):
             self.callback.stop()
             time.sleep(1)
         if message['messageType'] == 'serverStatus':
+            if imu.logging:
+                fileName = imu.logger.user['fileName']
+            else:
+                fileName = ''
             if imu.device_id:
                 with open('imu.json') as json_data:
-                    imuProperties = json.load(json_data)
-                self.write_message(json.dumps({ 'messageType' : 'serverStatus', 'data' : { 'serverVersion' : server_version, 'deviceId' : imu.device_id, 'deviceProperties' : imuProperties, 'logging' : imu.logging }}))
+                    imu_properties = json.load(json_data)
+                    imu.imu_properties = imu_properties
+                self.write_message(json.dumps({ 'messageType' : 'serverStatus', 'data' : { 'serverVersion' : server_version, 'serverUpdateRate' : callback_rate, 'packetType' : imu.packet_type,
+                                                                                            'deviceId' : imu.device_id, 'deviceProperties' : imu_properties, 'logging' : imu.logging, 'fileName' : fileName }}))
             else:
-                self.write_message(json.dumps({ 'messageType' : 'serverStatus', 'data' : { 'serverVersion' : server_version, 'deviceId' : imu.device_id, 'logging' : imu.logging }}))
+                self.write_message(json.dumps({ 'messageType' : 'serverStatus', 'data' : { 'serverVersion' : server_version, 'serverUpdateRate' : callback_rate,
+                                                                                            'deviceId' : imu.device_id, 'logging' : imu.logging, 'fileName' : fileName }}))
         elif message['messageType'] == 'requestAction':
             if list(message['data'].keys())[0] == 'getFields':
                 data = imu.get_fields(list(map(int,message['data']['getFields'].keys())), True)
                 print('get fields new')
                 self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "getFields" : data }}))
                 print(data)
+                imu.restore_odr()
             elif list(message['data'].keys())[0] == 'readFields':
                 data = imu.read_fields(list(map(int,message['data']['readFields'].keys())), True)
                 print('read fields new')
                 self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "readFields" : data }}))
                 print(data)
+                imu.restore_odr()
             elif list(message['data'].keys())[0] == 'setFields':
                 setData = zip(list(map(int,message['data']['setFields'].keys())), list(map(int,message['data']['setFields'].values())))
                 print('set fields new')
@@ -63,6 +69,7 @@ class WSHandler(tornado.websocket.WebSocketHandler):
                 data = imu.set_fields(setData, True)
                 # should be improved to really use data readback in UART protocol, and cross check values set correctly
                 self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "setFields" : setData }}))
+                imu.restore_odr()
             elif list(message['data'].keys())[0] == 'writeFields':
                 setData = zip(list(map(int,message['data']['writeFields'].keys())), list(map(int,message['data']['writeFields'].values())))
                 print('write fields new')
@@ -70,6 +77,7 @@ class WSHandler(tornado.websocket.WebSocketHandler):
                 data = imu.write_fields(setData, True)
                 # should be improved to really use data readback in UART protocol, and cross check values set correctly
                 self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "writeFields" : setData }}))
+                imu.restore_odr()
             elif list(message['data'].keys())[0] == 'startStream':
                 imu.restore_odr()
                 self.callback.start()  

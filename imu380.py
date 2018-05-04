@@ -82,6 +82,7 @@ class GrabIMU380Data:
         self.logger = None          # the file logger instance
         self.packet_size = 0        # expected size of packet 
         self.packet_type = 0        # expected type of packet
+        self.elapsed_time_sec = 0   # an accurate estimate of elapsed time in ODR mode using IMU timer data
         self.data = {}              # placeholder imu measurements of last converted packeted
        
     def find_device(self):
@@ -387,6 +388,8 @@ class GrabIMU380Data:
         self.synced = 0
         self.packet_size = 0        
         self.packet_type = 0  
+        self.elapsed_time_sec = 0
+        self.data = {}
         self.stream_mode = 1
           
     def connect(self):
@@ -661,12 +664,12 @@ class GrabIMU380Data:
             accels = [0 for x in range(3)] 
             for i in range(3):
                 accel_int16 = (256 * payload[2*i] + payload[2*i+1]) - 65535 if 256 * payload[2*i] + payload[2*i+1] > 32767  else  256 * payload[2*i] + payload[2*i+1]
-                accels[i] = (20 * accel_int16) / math.pow(2,16)
+                accels[i] = (9.80665 * 20 * accel_int16) / math.pow(2,16)
   
             gyros = [0 for x in range(3)] 
             for i in range(3):
                 gyro_int16 = (256 * payload[2*i+6] + payload[2*i+7]) - 65535 if 256 * payload[2*i+6] + payload[2*i+7] > 32767  else  256 * payload[2*i+6] + payload[2*i+7]
-                gyros[i] = (7 * math.pi * gyro_int16) / math.pow(2,16) 
+                gyros[i] = (1260 * gyro_int16) / math.pow(2,16) 
 
             mags = [0 for x in range(3)] 
             for i in range(3):
@@ -682,12 +685,19 @@ class GrabIMU380Data:
             itow = 256 * payload[26] + payload[27]   
 
             # BIT Value
-            bit = 256 * payload[28] + payload[29]         
+            bit = 256 * payload[28] + payload[29]   
 
-            data = collections.OrderedDict([( 'xAccel', accels[0]), ('yAccel', accels[1]), ('zAccel', accels[2]), ('xRate', gyros[0]), \
+            
+            if self.data:
+                prev_time = self.data['GPSITOW']
+                if (itow > prev_time):
+                    self.elapsed_time_sec += ( 1.0 / 65535.0 ) * (itow - prev_time)  
+                else:
+                    self.elapsed_time_sec += ( 1.0 / 65535.0 ) * (65535 - prev_time) + ( 1.0 / 65535.0 ) * itow 
+
+            data = collections.OrderedDict([('time', self.elapsed_time_sec), ( 'xAccel', accels[0]), ('yAccel', accels[1]), ('zAccel', accels[2]), ('xRate', gyros[0]), \
                      ('yRate' , gyros[1]), ('zRate', gyros[2]), ('xMag', mags[0]), ('yMag', mags[1]), ('zMag', mags[2]), ('xRateTemp', temps[0]), \
                      ('yRateTemp', temps[1]), ('zRateTemp', temps[2]), ('boardTemp', temps[3]), ('GPSITOW', itow), ('BITstatus', bit )])
-
 
             if self.logging == 1 and self.logger is not None:
                 self.logger.log(data, self.odr_setting) 
@@ -731,12 +741,12 @@ class GrabIMU380Data:
             accels = [0 for x in range(3)] 
             for i in range(3):
                 accel_int16 = (256 * payload[2*i] + payload[2*i+1]) - 65535 if 256 * payload[2*i] + payload[2*i+1] > 32767  else  256 * payload[2*i] + payload[2*i+1]
-                accels[i] = (20 * accel_int16) / math.pow(2,16)
+                accels[i] = (9.80665 * 20 * accel_int16) / math.pow(2,16)
   
             gyros = [0 for x in range(3)] 
             for i in range(3):
                 gyro_int16 = (256 * payload[2*i+6] + payload[2*i+7]) - 65535 if 256 * payload[2*i+6] + payload[2*i+7] > 32767  else  256 * payload[2*i+6] + payload[2*i+7]
-                gyros[i] = (7 * math.pi * gyro_int16) / math.pow(2,16) 
+                gyros[i] = (1260 * gyro_int16) / math.pow(2,16) 
 
             temps = [0 for x in range(4)] 
             for i in range(4):
@@ -780,17 +790,17 @@ class GrabIMU380Data:
             angles = [0 for x in range(3)] 
             for i in range(3):
                 angle_int16 = (256 * payload[2*i] + payload[2*i+1]) - 65535 if 256 * payload[2*i] + payload[2*i+1] > 32767  else  256 * payload[2*i] + payload[2*i+1]
-                angles[i] = (2 * math.pi * angle_int16) / math.pow(2,16) 
+                angles[i] = (360.0 * angle_int16) / math.pow(2,16) 
 
             gyros = [0 for x in range(3)] 
             for i in range(3):
                 gyro_int16 = (256 * payload[2*i+6] + payload[2*i+7]) - 65535 if 256 * payload[2*i+6] + payload[2*i+7] > 32767  else  256 * payload[2*i+6] + payload[2*i+7]
-                gyros[i] = (7 * math.pi * gyro_int16) / math.pow(2,16) 
+                gyros[i] = (1260 * gyro_int16) / math.pow(2,16) 
 
             accels = [0 for x in range(3)] 
             for i in range(3):
                 accel_int16 = (256 * payload[2*i+12] + payload[2*i+13]) - 65535 if 256 * payload[2*i+12] + payload[2*i+13] > 32767  else  256 * payload[2*i+12] + payload[2*i+13]
-                accels[i] = (20 * accel_int16) / math.pow(2,16)
+                accels[i] = (9.80665 * 20 * accel_int16) / math.pow(2,16)
             
             mags = [0 for x in range(3)] 
             for i in range(3):
@@ -839,17 +849,17 @@ class GrabIMU380Data:
             angles = [0 for x in range(3)] 
             for i in range(3):
                 angle_int16 = (256 * payload[2*i] + payload[2*i+1]) - 65535 if 256 * payload[2*i] + payload[2*i+1] > 32767  else  256 * payload[2*i] + payload[2*i+1]
-                angles[i] = (2 * math.pi * angle_int16) / math.pow(2,16) 
+                angles[i] = (360.0 * angle_int16) / math.pow(2,16) 
 
             gyros = [0 for x in range(3)] 
             for i in range(3):
                 gyro_int16 = (256 * payload[2*i+6] + payload[2*i+7]) - 65535 if 256 * payload[2*i+6] + payload[2*i+7] > 32767  else  256 * payload[2*i+6] + payload[2*i+7]
-                gyros[i] = (7 * math.pi * gyro_int16) / math.pow(2,16) 
+                gyros[i] = (1260 * gyro_int16) / math.pow(2,16) 
 
             accels = [0 for x in range(3)] 
             for i in range(3):
                 accel_int16 = (256 * payload[2*i+12] + payload[2*i+13]) - 65535 if 256 * payload[2*i+12] + payload[2*i+13] > 32767  else  256 * payload[2*i+12] + payload[2*i+13]
-                accels[i] = (20 * accel_int16) / math.pow(2,16)
+                accels[i] = (9.80665 * 20 * accel_int16) / math.pow(2,16)
             
             temp = [0 for x in range(3)] 
             for i in range(3):
@@ -894,17 +904,17 @@ class GrabIMU380Data:
             angles = [0 for x in range(3)] 
             for i in range(3):
                 angle_int16 = (256 * payload[2*i] + payload[2*i+1]) - 65535 if 256 * payload[2*i] + payload[2*i+1] > 32767  else  256 * payload[2*i] + payload[2*i+1]
-                angles[i] = (2 * math.pi * angle_int16) / math.pow(2,16) 
+                angles[i] = (360.0 * angle_int16) / math.pow(2,16) 
 
             gyros = [0 for x in range(3)] 
             for i in range(3):
                 gyro_int16 = (256 * payload[2*i+6] + payload[2*i+7]) - 65535 if 256 * payload[2*i+6] + payload[2*i+7] > 32767  else  256 * payload[2*i+6] + payload[2*i+7]
-                gyros[i] = (7 * math.pi * gyro_int16) / math.pow(2,16) 
+                gyros[i] = (1260 * gyro_int16) / math.pow(2,16) 
 
             accels = [0 for x in range(3)] 
             for i in range(3):
                 accel_int16 = (256 * payload[2*i+12] + payload[2*i+13]) - 65535 if 256 * payload[2*i+12] + payload[2*i+13] > 32767  else  256 * payload[2*i+12] + payload[2*i+13]
-                accels[i] = (20 * accel_int16) / math.pow(2,16)
+                accels[i] = (9.80665 * 20 * accel_int16) / math.pow(2,16)
             
             temp = [0 for x in range(3)] 
             for i in range(3):
@@ -949,12 +959,12 @@ class GrabIMU380Data:
             angles = [0 for x in range(3)] 
             for i in range(3):
                 angle_int16 = (256 * payload[2*i] + payload[2*i+1]) - 65535 if 256 * payload[2*i] + payload[2*i+1] > 32767  else  256 * payload[2*i] + payload[2*i+1]
-                angles[i] = (2 * math.pi * angle_int16) / math.pow(2,16) 
+                angles[i] = (360.0 * angle_int16) / math.pow(2,16) 
 
             gyros = [0 for x in range(3)] 
             for i in range(3):
                 gyro_int16 = (256 * payload[2*i+6] + payload[2*i+7]) - 65535 if 256 * payload[2*i+6] + payload[2*i+7] > 32767  else  256 * payload[2*i+6] + payload[2*i+7]
-                gyros[i] = (7 * math.pi * gyro_int16) / math.pow(2,16) 
+                gyros[i] = (1260 * gyro_int16) / math.pow(2,16) 
 
             vel = [0 for x in range(3)] 
             for i in range(3):
@@ -964,7 +974,7 @@ class GrabIMU380Data:
             tude = [0 for x in range(3)] 
             for i in range(2):
                 tude_int32 = (16777216 * payload[2*i+18] + 65536 * payload[2*i+19] + 256 * payload[2*i+20] + payload[21]) - 2147483648 if 16777216 * payload[2*i+18] + 65536 *  payload[2*i+19] + 256 * payload[2*i+20] + payload[21] > 2147483647  else  16777216 * payload[2*i+18] + 65536 * payload[2*i+19] + 256 * payload[2*i+20] + payload[21]
-                tude[i] = (2 * math.pi * tude_int32) / math.pow(2,32)
+                tude[i] = (360.0  * tude_int32) / math.pow(2,32)
        
             # altitude
             tude_int16 = 256 * payload[26] + payload[27];
@@ -1011,17 +1021,17 @@ class GrabIMU380Data:
             angles = [0 for x in range(3)] 
             for i in range(3):
                 angle_int16 = (256 * payload[2*i] + payload[2*i+1]) - 65535 if 256 * payload[2*i] + payload[2*i+1] > 32767  else  256 * payload[2*i] + payload[2*i+1]
-                angles[i] = (2 * math.pi * angle_int16) / math.pow(2,16) 
+                angles[i] = (360.0 * angle_int16) / math.pow(2,16) 
 
             gyros = [0 for x in range(3)] 
             for i in range(3):
                 gyro_int16 = (256 * payload[2*i+6] + payload[2*i+7]) - 65535 if 256 * payload[2*i+6] + payload[2*i+7] > 32767  else  256 * payload[2*i+6] + payload[2*i+7]
-                gyros[i] = (7 * math.pi * gyro_int16) / math.pow(2,16) 
+                gyros[i] = (1260 * gyro_int16) / math.pow(2,16) 
 
             accels = [0 for x in range(3)] 
             for i in range(3):
                 accel_int16 = (256 * payload[2*i+12] + payload[2*i+13]) - 65535 if 256 * payload[2*i+12] + payload[2*i+13] > 32767  else  256 * payload[2*i+12] + payload[2*i+13]
-                accels[i] = (20 * accel_int16) / math.pow(2,16)
+                accels[i] = (9.80665 * 20 * accel_int16) / math.pow(2,16)
             vel = [0 for x in range(3)] 
             for i in range(3):
                 vel_int16 = (256 * payload[2*i+18] + payload[2*i+19]) - 65535 if 256 * payload[2*i+18] + payload[2*i+19] > 32767  else  256 * payload[2*i+18] + payload[2*i+19]
@@ -1030,7 +1040,7 @@ class GrabIMU380Data:
             tude = [0 for x in range(3)] 
             for i in range(2):
                 tude_int32 = (16777216 * payload[2*i+24] + 65536 * payload[2*i+25] + 256 * payload[2*i+26] + payload[27]) - 2147483648 if 16777216 * payload[2*i+24] + 65536 *  payload[2*i+25] + 256 * payload[2*i+26] + payload[27] > 2147483647  else  16777216 * payload[2*i+24] + 65536 * payload[2*i+25] + 256 * payload[2*i+26] + payload[27]
-                tude[i] = (2 * math.pi * tude_int32) / math.pow(2,32)
+                tude[i] = (360.0 * tude_int32) / math.pow(2,32)
        
             # altitude
             tude_int16 = 256 * payload[32] + payload[33];

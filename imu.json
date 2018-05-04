@@ -203,7 +203,30 @@
                 "24" : "boardTemp",
                 "26" : "timeStamp",
                 "28" : "bitStatus"
-            }
+            },
+            "graphs" : [
+                { 
+                    "name" : "Acceleration",
+                    "units" : "m/s/s",
+                    "xAxis" : "Time (s)",
+                    "yAxes" : [ "xAccel", "yAccel", "zAccel"],
+                    "yMax" : 80
+                },
+                {
+                    "name" : "Angular Rate",
+                    "units" : "deg/s",
+                    "xAxis" : "Time (s)",
+                    "yAxes" : [ "xRate", "yRate", "zRate"],
+                    "yMax" : 400
+                },
+                {
+                    "name" : "Magnetic Field",
+                    "units" : "uT",
+                    "xAxis" : "Time (s)",
+                    "yAxes" : [ "xMag", "yMag", "zMag"],
+                    "yMax" : 400
+                }
+            ] 
         },
         "S1" : {
             "type" : "outputPacket",
