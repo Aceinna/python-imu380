@@ -210,6 +210,7 @@
                     "units" : "m/s/s",
                     "xAxis" : "Time (s)",
                     "yAxes" : [ "xAccel", "yAccel", "zAccel"],
+                    "colors" : [ "#FF0000", "#00FF00", "#0000FF" ],
                     "yMax" : 80
                 },
                 {
@@ -217,13 +218,7 @@
                     "units" : "deg/s",
                     "xAxis" : "Time (s)",
                     "yAxes" : [ "xRate", "yRate", "zRate"],
-                    "yMax" : 400
-                },
-                {
-                    "name" : "Magnetic Field",
-                    "units" : "uT",
-                    "xAxis" : "Time (s)",
-                    "yAxes" : [ "xMag", "yMag", "zMag"],
+                    "colors" : [ "#FF0000", "#00FF00", "#0000FF" ],
                     "yMax" : 400
                 }
             ] 
