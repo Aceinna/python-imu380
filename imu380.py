@@ -734,14 +734,14 @@ class GrabIMU380Data:
                 14	yRateTemp	I2	200/2^16	deg. C	Y rate temperature
                 16	zRateTemp	I2	200/2^16	deg. C	Z rate temperature
                 18	boardTemp	I2	200/2^16	deg. C	CPU board temperature
-                20	counter	U2	-	packets	Output packet counter
+                20	counter         U2	-	packets	Output time stamp 
                 22	BITstatus	U2	-	-	Master BIT and Status'''
 
             accels = [0 for x in range(3)] 
             for i in range(3):
                 accel_int16 = (256 * payload[2*i] + payload[2*i+1]) - 65535 if 256 * payload[2*i] + payload[2*i+1] > 32767  else  256 * payload[2*i] + payload[2*i+1]
                 accels[i] = (9.80665 * 20 * accel_int16) / math.pow(2,16)
-  
+ 
             gyros = [0 for x in range(3)] 
             for i in range(3):
                 gyro_int16 = (256 * payload[2*i+6] + payload[2*i+7]) - 65535 if 256 * payload[2*i+6] + payload[2*i+7] > 32767  else  256 * payload[2*i+6] + payload[2*i+7]
@@ -753,14 +753,21 @@ class GrabIMU380Data:
                 temps[i] = (200 * temp_int16) / math.pow(2,16)
         
             # Counter Value
-            counter = 256 * payload[20] + payload[21]   
+            count = 256 * payload[20] + payload[21]   
 
             # BIT Value
             bit = 256 * payload[22] + payload[23]         
 
-            data = collections.OrderedDict([( 'xAccel', accels[0]), ('yAccel', accels[1]), ('zAccel', accels[2]), ('xRate', gyros[0]), \
+            if self.data:
+                prev_time = self.data['counter']
+                if (count > prev_time):
+                    self.elapsed_time_sec += ( 1.0 / 65535.0 ) * (count - prev_time)  
+                else:
+                    self.elapsed_time_sec += ( 1.0 / 65535.0 ) * (65535 - prev_time) + ( 1.0 / 65535.0 ) * count 
+
+            data = collections.OrderedDict([('time', self.elapsed_time_sec), ( 'xAccel', accels[0]), ('yAccel', accels[1]), ('zAccel', accels[2]), ('xRate', gyros[0]), \
                      ('yRate' , gyros[1]), ('zRate', gyros[2]), ('xRateTemp', temps[0]), \
-                     ('yRateTemp', temps[1]), ('zRateTemp', temps[2]), ('boardTemp', temps[3]), ('counter', counter), ('BITstatus', bit )])
+                     ('yRateTemp', temps[1]), ('zRateTemp', temps[2]), ('boardTemp', temps[3]), ('counter', count), ('BITstatus', bit )])
 
 
             if self.logging == 1 and self.logger is not None:
@@ -816,7 +823,14 @@ class GrabIMU380Data:
             # BIT Value
             bit = 256 * payload[30] + payload[31]         
 
-            data = collections.OrderedDict([('rollAngle', angles[0]),('pitchAngle', angles[1]),('yawAngleMag', angles[2]), \
+            if self.data:
+                prev_time = self.data['timeITOW']
+                if (itow > prev_time):
+                    self.elapsed_time_sec += ( 1.0 / 65535.0 ) * (itow - prev_time)  
+                else:
+                    self.elapsed_time_sec += ( 1.0 / 65535.0 ) * (65535 - prev_time) + ( 1.0 / 65535.0 ) * itow 
+
+            data = collections.OrderedDict([('time', self.elapsed_time_sec), ('rollAngle', angles[0]),('pitchAngle', angles[1]),('yawAngleMag', angles[2]), \
                     ('xRateCorrected' , gyros[0]), ('yRateCorrected' , gyros[1]), ('zRateCorrected', gyros[2]), \
                     ( 'xAccel', accels[0]), ('yAccel', accels[1]), ('zAccel', accels[2]), \
                     ( 'xMag', mags[0]), ('yMag', mags[1]), ('zMag', mags[2]), ('xRateTemp', temp), \
@@ -871,7 +885,14 @@ class GrabIMU380Data:
             # BIT Value
             bit = 256 * payload[28] + payload[29]         
 
-            data = collections.OrderedDict([('rollAngle', angles[0]),('pitchAngle', angles[1]),('yawAngleMag', angles[2]), \
+            if self.data:
+                prev_time = self.data['timeITOW']
+                if (itow > prev_time):
+                    self.elapsed_time_sec += ( 1.0 / 65535.0 ) * (itow - prev_time)  
+                else:
+                    self.elapsed_time_sec += ( 1.0 / 65535.0 ) * (65535 - prev_time) + ( 1.0 / 65535.0 ) * itow 
+
+            data = collections.OrderedDict([('time', self.elapsed_time_sec), ('rollAngle', angles[0]),('pitchAngle', angles[1]),('yawAngleMag', angles[2]), \
                     ('xRateCorrected' , gyros[0]), ('yRateCorrected' , gyros[1]), ('zRateCorrected', gyros[2]), \
                     ( 'xAccel', accels[0]), ('yAccel', accels[1]), ('zAccel', accels[2]), \
                     ( 'xRateTemp', temp[0]), ('yRateTemp', temp[1]), ('zRateTemp', temp[2]), \
