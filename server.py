@@ -5,6 +5,7 @@ from tornado.ioloop import PeriodicCallback
 import tornado.web
 import json
 import time
+import cffi
 import math
 import imu380
 import threading
@@ -24,6 +25,8 @@ class WSHandler(tornado.websocket.WebSocketHandler):
     def send_data(self):
         if imu.connect and imu.stream_mode:
             d = imu.get_latest()
+            print(imu.packet_type)
+            print(d)
             self.write_message(json.dumps({ 'messageType' : 'event',  'data' : { 'newOutput' : d }}))
 
     def on_message(self, message):
@@ -77,6 +80,7 @@ class WSHandler(tornado.websocket.WebSocketHandler):
                 self.write_message(json.dumps({ "messageType" : "requestAction", "data" : { "writeFields" : setData }}))
                 imu.restore_odr()
             elif list(message['data'].keys())[0] == 'startStream':
+                print('start stream')
                 imu.restore_odr()
                 self.callback.start()  
             elif list(message['data'].keys())[0] == 'stopStream':
