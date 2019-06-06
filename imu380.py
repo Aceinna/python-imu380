@@ -1269,12 +1269,6 @@ class GrabIMU380Data:
 
 if __name__ == "__main__":
     grab = GrabIMU380Data()
-    #grab.upgrade_fw('MTLT305D_19.0.6.bin')
-    grab.start_log()
-    # Test for WS Server
-    #grab.read_fields([0x0001, 0x0002, 0x0003])
-    #grab.get_fields([0x0001, 0x0002, 0x0003])
-    #grab.write_fields([[3, 21296]])
-    #grab.read_fields([0x0001, 0x0002, 0x0003])
-    #grab.get_fields([0x0001, 0x0002, 0x0003])
+    grab.find_device()
+    grab.start_log('test.log')
     

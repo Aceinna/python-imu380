@@ -22,16 +22,12 @@ class LogIMU380Data:
         self.name = 'data-' + datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S') + '.csv'
         self.file = open('data/' + self.name, 'w')
         self.first_row = 0
-        self.user = user
-        if self.user['fileName'] == '':
-            self.user['fileName'] = self.name
         # decode converts out of byte array
         self.sn = imu.device_id.split(" ")[0]
         self.pn = imu.device_id.split(" ")[1]
         self.device_id = imu.device_id
         self.odr_setting = imu.odr_setting
         self.packet_type = imu.packet_type
-        self.imu_properties = imu.imu_properties
         odr_rates = { 0: 'Quiet', 1 : '100Hz', 2 : '50Hz', 4 : '25Hz'  }
         self.sample_rate = odr_rates[self.odr_setting]
 
